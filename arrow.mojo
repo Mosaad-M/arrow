@@ -15,9 +15,19 @@ fn _ipc_continuation() -> UInt32:
     return UInt32(0xFFFFFFFF)
 
 
-fn ipc_pad8(size: Int) -> Int:
-    """Return the smallest multiple of 8 >= size."""
+fn ipc_pad8(size: Int) raises -> Int:
+    """Return the smallest multiple of 8 >= size. Raises on negative or huge input."""
+    if size < 0:
+        raise Error("arrow: ipc_pad8: negative size")
+    # Guard: size + 7 must not overflow (max safe = 2^62 - 1 on 64-bit)
+    if size > 0x3FFF_FFFF_FFFF_FFFF:
+        raise Error("arrow: ipc_pad8: size too large")
     return (size + 7) & ~7
+
+
+# 1 GB hard cap per IPC message — matches flatbuffers._grow() guard philosophy
+fn _max_ipc_msg() -> Int:
+    return 1 << 30
 
 
 fn encode_ipc_message(metadata: List[UInt8], body: List[UInt8]) raises -> List[UInt8]:
@@ -30,6 +40,10 @@ fn encode_ipc_message(metadata: List[UInt8], body: List[UInt8]) raises -> List[U
       [body bytes]
       [zero padding to 8-byte boundary]
     """
+    # S2: enforce 1 GB cap to prevent overflow-induced OOM
+    if len(metadata) > _max_ipc_msg() or len(body) > _max_ipc_msg():
+        raise Error("arrow: encode_ipc_message: message too large (> 1 GB)")
+
     var meta_len = len(metadata)
     var header_size = 4 + 4 + meta_len          # continuation + length + metadata
     var padded_header = ipc_pad8(header_size)
@@ -42,17 +56,12 @@ fn encode_ipc_message(metadata: List[UInt8], body: List[UInt8]) raises -> List[U
     var total = padded_header + padded_body
     var out = List[UInt8](capacity=total)
 
-    # Continuation marker
-    out.append(UInt8(0xFF))
-    out.append(UInt8(0xFF))
-    out.append(UInt8(0xFF))
-    out.append(UInt8(0xFF))
-
-    # Metadata length (i32 LE)
-    out.append(UInt8(meta_len & 0xFF))
-    out.append(UInt8((meta_len >> 8) & 0xFF))
-    out.append(UInt8((meta_len >> 16) & 0xFF))
-    out.append(UInt8((meta_len >> 24) & 0xFF))
+    # P2: write continuation marker and metadata length using LE write helpers
+    # pre-append 8 zero bytes then write at known positions
+    for _ in range(8):
+        out.append(UInt8(0))
+    write_u32_le(out, 0, UInt32(0xFFFFFFFF))
+    write_i32_le(out, 4, Int32(meta_len))
 
     # Metadata bytes
     for i in range(meta_len):
@@ -79,35 +88,53 @@ fn decode_ipc_message(buf: List[UInt8], pos: Int) raises -> Tuple[List[UInt8], L
     Returns (metadata_bytes, body_bytes, next_pos).
     Raises on truncation or bad continuation marker.
     body_bytes is extracted using the bodyLength field from the caller's
-    FlatBuffers Message table (Phase 4+). In Phase 1, returns everything
-    after the padded header up to the next 8-byte boundary as body.
+    FlatBuffers Message table (Phase 4+). Phase 1 returns empty body.
     """
+    # S4: validate pos before any arithmetic
+    if pos < 0:
+        raise Error("arrow: decode_ipc_message: negative pos")
     if pos + 8 > len(buf):
         raise Error("arrow: truncated IPC message at pos " + String(pos))
 
     var cont = read_u32_le(buf, pos)
     if cont != _ipc_continuation():
-        raise Error("arrow: bad continuation marker: " + String(cont))
+        raise Error("arrow: bad continuation marker")
 
-    var meta_len = Int(read_i32_le(buf, pos + 4))
-    if meta_len < 0:
+    var meta_len_i32 = read_i32_le(buf, pos + 4)
+    if meta_len_i32 < 0:
         raise Error("arrow: negative metadata length")
 
-    var header_end = pos + 4 + 4 + meta_len
-    if header_end > len(buf):
+    var meta_len = Int(meta_len_i32)
+
+    # S3: overflow-safe bounds check — subtract instead of add to avoid wrapping
+    if meta_len > len(buf) - pos - 8:
         raise Error("arrow: metadata truncated")
 
-    var padded_header_end = ipc_pad8(4 + 4 + meta_len) + pos
+    var padded_header_end = ipc_pad8(8 + meta_len) + pos
+    if padded_header_end > len(buf):
+        raise Error("arrow: padded metadata exceeds buffer")
 
     var metadata = List[UInt8](capacity=meta_len)
     for i in range(meta_len):
         metadata.append(buf[pos + 8 + i])
 
-    # Return everything from padded_header_end to end of buf as body
-    # (Phase 4 will use bodyLength from the FlatBuffers Message table instead)
+    # Phase 4 will populate body using bodyLength from the FlatBuffers Message table
     var body = List[UInt8]()
-    var next_pos = padded_header_end
-    return Tuple[List[UInt8], List[UInt8], Int](metadata, body, next_pos)
+    return Tuple[List[UInt8], List[UInt8], Int](metadata^, body^, padded_header_end)
+
+
+fn encode_eos() -> List[UInt8]:
+    """Returns the 8-byte IPC end-of-stream marker."""
+    var out = List[UInt8](capacity=8)
+    out.append(UInt8(0xFF))
+    out.append(UInt8(0xFF))
+    out.append(UInt8(0xFF))
+    out.append(UInt8(0xFF))
+    out.append(UInt8(0x00))
+    out.append(UInt8(0x00))
+    out.append(UInt8(0x00))
+    out.append(UInt8(0x00))
+    return out^
 
 
 # ============================================================================
@@ -222,20 +249,28 @@ fn encode_arrow_type(mut b: FlatBufferBuilder, t: ArrowType) raises -> Tuple[UIn
     Builds the type table in b and returns (discriminant, table_offset).
     Build order: type table must be built before the Field table that references it.
     """
+    # S5: validate tag before encoding to prevent silent type confusion
     var disc = t.tag
-    if disc == TYPE_INT():
+    if disc < TYPE_NULL() or disc > TYPE_BOOL():
+        raise Error("arrow: encode_arrow_type: unknown type tag: " + String(disc))
+
+    # P1: locals eliminate repeated function calls in comparisons
+    var T_INT   = UInt8(2)
+    var T_FLOAT = UInt8(3)
+
+    if disc == T_INT:
         b.start_table()
         b.add_field_i32(0, t.int_meta.bit_width)
         b.add_field_bool(1, t.int_meta.is_signed)
         var off = b.end_table()
         return Tuple[UInt8, UInt32](disc, off)
-    elif disc == TYPE_FLOAT():
+    elif disc == T_FLOAT:
         b.start_table()
         b.add_field_u16(0, t.float_meta.precision)
         var off = b.end_table()
         return Tuple[UInt8, UInt32](disc, off)
     else:
-        # Null, Binary, Utf8, Bool — empty table
+        # Null, Binary, Utf8, Bool — empty table (vtable dedup shares one vtable)
         b.start_table()
         var off = b.end_table()
         return Tuple[UInt8, UInt32](disc, off)
@@ -243,34 +278,28 @@ fn encode_arrow_type(mut b: FlatBufferBuilder, t: ArrowType) raises -> Tuple[UIn
 
 fn decode_arrow_type(r: FlatBuffersReader, discriminant: UInt8, type_tp: UInt32) raises -> ArrowType:
     """Reads the type table at type_tp and returns an ArrowType."""
-    if discriminant == TYPE_NULL():
+    # P1: locals eliminate repeated function calls
+    var T_NULL  = UInt8(1)
+    var T_INT   = UInt8(2)
+    var T_FLOAT = UInt8(3)
+    var T_BIN   = UInt8(4)
+    var T_UTF8  = UInt8(5)
+    var T_BOOL  = UInt8(6)
+
+    if discriminant == T_NULL:
         return ArrowType.null()
-    elif discriminant == TYPE_INT():
+    elif discriminant == T_INT:
         var bw = r.read_i32(type_tp, 0)
         var signed = r.read_bool(type_tp, 1)
         return ArrowType.int_(bw, signed)
-    elif discriminant == TYPE_FLOAT():
+    elif discriminant == T_FLOAT:
         var prec = r.read_u16(type_tp, 0)
         return ArrowType.float_(prec)
-    elif discriminant == TYPE_BINARY():
+    elif discriminant == T_BIN:
         return ArrowType.binary()
-    elif discriminant == TYPE_UTF8():
+    elif discriminant == T_UTF8:
         return ArrowType.utf8()
-    elif discriminant == TYPE_BOOL():
+    elif discriminant == T_BOOL:
         return ArrowType.bool_()
     else:
         raise Error("arrow: unknown type discriminant: " + String(discriminant))
-
-
-fn encode_eos() -> List[UInt8]:
-    """Returns the 8-byte IPC end-of-stream marker."""
-    var out = List[UInt8](capacity=8)
-    out.append(UInt8(0xFF))
-    out.append(UInt8(0xFF))
-    out.append(UInt8(0xFF))
-    out.append(UInt8(0xFF))
-    out.append(UInt8(0x00))
-    out.append(UInt8(0x00))
-    out.append(UInt8(0x00))
-    out.append(UInt8(0x00))
-    return out^
