@@ -9,7 +9,7 @@ env = { FLATBUFFERS = "../flatbuffers" }
 
 [tasks]
 install = "mojo-pkg install"
-test-arrow = "bash -c 'mojo run $(mojo-pkg flags 2>/dev/null || echo \"-I $FLATBUFFERS\") test_arrow.mojo'"
+test-arrow = "bash -c 'mojo run $(cat .mojo_flags 2>/dev/null || echo \"-I $FLATBUFFERS\") test_arrow.mojo'"
 format = "mblack arrow.mojo test_arrow.mojo"
 
 [dependencies]
