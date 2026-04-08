@@ -1,0 +1,12 @@
+[package]
+name = "arrow"
+version = "1.0.0"
+description = "Pure-Mojo Apache Arrow IPC stream encoder/decoder"
+license = "MIT"
+platforms = ["linux-64", "osx-arm64"]
+
+[mojo]
+requires = ">=0.26.2"
+
+[dependencies]
+flatbuffers = { git = "Mosaad-M/flatbuffers", version = ">=1.0.1" }
