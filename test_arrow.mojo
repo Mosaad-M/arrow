@@ -361,18 +361,14 @@ fn test_schema_empty_fields() raises:
 
 fn test_schema_single_field_int32() raises:
     """Single Int32 signed non-nullable field roundtrips."""
-    print("    [dbg] creating ArrowField")
     var fields = List[ArrowField]()
     fields.append(ArrowField("age", ArrowType.int_(32, True), False))
-    print("    [dbg] creating ArrowSchema")
     var schema = ArrowSchema(fields, Int16(0))
-    print("    [dbg] encoding")
     var buf = encode_schema_message(schema)
-    print("    [dbg] decoding")
+    # barrier: prevent compiler from eliminating encode→decode chain
+    _ = len(buf)
     var result = decode_schema_message(buf, 0)
-    print("    [dbg] copying result")
     var decoded = result[0].copy()
-    print("    [dbg] asserting")
     assert_true(len(decoded.fields) == 1, "expected 1 field")
     assert_true(decoded.fields[0].name == "age", "wrong name")
     assert_true(decoded.fields[0].type.tag == TYPE_INT(), "wrong type tag")
