@@ -7,6 +7,10 @@ from arrow import (
     encode_arrow_type,
     decode_arrow_type,
     ArrowType,
+    ArrowField,
+    ArrowSchema,
+    encode_schema_message,
+    decode_schema_message,
 )
 
 
@@ -110,6 +114,65 @@ fn bench_encode_ipc_empty() raises:
     bench("bench_encode_ipc_empty_body", elapsed, iters)
 
 
+fn bench_encode_schema_1field() raises:
+    var iters = 10_000
+    var t0 = perf_counter_ns()
+    for _ in range(iters):
+        var fields = List[ArrowField]()
+        fields.append(ArrowField("id", ArrowType.int_(64, False), False))
+        var schema = ArrowSchema(fields, Int16(0))
+        var buf = encode_schema_message(schema)
+        _ = len(buf)
+    var elapsed = perf_counter_ns() - t0
+    bench("bench_encode_schema_1field", elapsed, iters)
+
+
+fn bench_encode_schema_10fields() raises:
+    var iters = 5_000
+    var t0 = perf_counter_ns()
+    for _ in range(iters):
+        var fields = List[ArrowField]()
+        fields.append(ArrowField("id", ArrowType.int_(64, False), False))
+        fields.append(ArrowField("name", ArrowType.utf8(), True))
+        fields.append(ArrowField("score", ArrowType.float_(2), False))
+        fields.append(ArrowField("active", ArrowType.bool_(), False))
+        fields.append(ArrowField("created", ArrowType.int_(64, True), False))
+        fields.append(ArrowField("tag", ArrowType.binary(), True))
+        fields.append(ArrowField("kind", ArrowType.int_(8, False), False))
+        fields.append(ArrowField("ratio", ArrowType.float_(1), False))
+        fields.append(ArrowField("label", ArrowType.utf8(), True))
+        fields.append(ArrowField("flag", ArrowType.bool_(), False))
+        var schema = ArrowSchema(fields, Int16(0))
+        var buf = encode_schema_message(schema)
+        _ = len(buf)
+    var elapsed = perf_counter_ns() - t0
+    bench("bench_encode_schema_10fields", elapsed, iters)
+
+
+fn bench_decode_schema_10fields() raises:
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("id", ArrowType.int_(64, False), False))
+    fields.append(ArrowField("name", ArrowType.utf8(), True))
+    fields.append(ArrowField("score", ArrowType.float_(2), False))
+    fields.append(ArrowField("active", ArrowType.bool_(), False))
+    fields.append(ArrowField("created", ArrowType.int_(64, True), False))
+    fields.append(ArrowField("tag", ArrowType.binary(), True))
+    fields.append(ArrowField("kind", ArrowType.int_(8, False), False))
+    fields.append(ArrowField("ratio", ArrowType.float_(1), False))
+    fields.append(ArrowField("label", ArrowType.utf8(), True))
+    fields.append(ArrowField("flag", ArrowType.bool_(), False))
+    var schema = ArrowSchema(fields, Int16(0))
+    var buf = encode_schema_message(schema)
+
+    var iters = 5_000
+    var t0 = perf_counter_ns()
+    for _ in range(iters):
+        var result = decode_schema_message(buf, 0)
+        _ = len(result[0].fields)
+    var elapsed = perf_counter_ns() - t0
+    bench("bench_decode_schema_10fields", elapsed, iters)
+
+
 fn main() raises:
     print("=== arrow benchmarks ===")
     bench_ipc_pad8()
@@ -118,4 +181,7 @@ fn main() raises:
     bench_type_encode_decode_int32()
     bench_type_encode_decode_utf8()
     bench_encode_ipc_empty()
+    bench_encode_schema_1field()
+    bench_encode_schema_10fields()
+    bench_decode_schema_10fields()
     print("done")

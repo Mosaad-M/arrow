@@ -303,3 +303,166 @@ fn decode_arrow_type(r: FlatBuffersReader, discriminant: UInt8, type_tp: UInt32)
         return ArrowType.bool_()
     else:
         raise Error("arrow: unknown type discriminant: " + String(discriminant))
+
+
+# ============================================================================
+# Phase 3 — Schema message encoding/decoding
+# ============================================================================
+
+struct ArrowField(Copyable, Movable):
+    """One column descriptor: name, type, nullable."""
+    var name: String
+    var type: ArrowType
+    var nullable: Bool
+
+    fn __init__(out self, name: String, type: ArrowType, nullable: Bool):
+        self.name = name
+        self.type = type.copy()
+        self.nullable = nullable
+
+    fn __copyinit__(out self, copy: Self):
+        self.name = copy.name
+        self.type = copy.type.copy()
+        self.nullable = copy.nullable
+
+    fn __moveinit__(out self, deinit take: Self):
+        self.name = take.name^
+        self.type = take.type^
+        self.nullable = take.nullable
+
+    fn copy(self) -> Self:
+        return Self(self.name, self.type.copy(), self.nullable)
+
+
+struct ArrowSchema(Copyable, Movable):
+    """Schema: ordered list of fields and endianness."""
+    var fields: List[ArrowField]
+    var endianness: Int16   # 0 = little-endian, 1 = big-endian
+
+    fn __init__(out self, fields: List[ArrowField], endianness: Int16 = Int16(0)):
+        self.fields = List[ArrowField]()
+        for i in range(len(fields)):
+            self.fields.append(fields[i].copy())
+        self.endianness = endianness
+
+    fn __copyinit__(out self, copy: Self):
+        self.fields = List[ArrowField]()
+        for i in range(len(copy.fields)):
+            self.fields.append(copy.fields[i].copy())
+        self.endianness = copy.endianness
+
+    fn __moveinit__(out self, deinit take: Self):
+        self.fields = take.fields^
+        self.endianness = take.endianness
+
+
+fn encode_schema_message(schema: ArrowSchema) raises -> List[UInt8]:
+    """
+    Encode an ArrowSchema as an IPC Schema message.
+    Layout (FlatBuffers, bottom-up):
+      For each field: type table → name string → Field table
+      Vector of Field offsets → Schema table → Message table
+      Wrapped in encode_ipc_message (no body for Schema).
+    """
+    # S6: cap field count to prevent runaway allocation
+    if len(schema.fields) > 65536:
+        raise Error("arrow: encode_schema_message: too many fields (> 65536)")
+
+    # P4: size estimate — each field needs ~100 bytes in the FlatBuffer
+    var est_capacity = len(schema.fields) * 100 + 512
+    if est_capacity < 1024:
+        est_capacity = 1024
+    var b = FlatBufferBuilder(est_capacity)
+
+    # Build each Field table bottom-up, collecting offsets
+    var field_offs = List[UInt32]()
+    for i in range(len(schema.fields)):
+        # Explicit copy to ensure safe ownership before FlatBuffer mutations
+        var f = schema.fields[i].copy()
+
+        # 1. Build type sub-table (must precede start_table for Field)
+        var type_result = encode_arrow_type(b, f.type)
+        var type_disc = type_result[0]
+        var type_off  = type_result[1]
+
+        # 2. Create name string (must precede start_table for Field)
+        var name_off = b.create_string(f.name)
+
+        # 3. Build Field table
+        b.start_table()
+        b.add_field_offset(0, name_off)
+        b.add_field_bool(1, f.nullable)
+        b.add_field_u8(2, type_disc)     # union discriminant
+        b.add_field_offset(3, type_off)  # union value
+        # slot 4 (children) intentionally absent — Phase 3 has no nested types
+        var foff = b.end_table()
+        field_offs.append(foff)
+
+    # 4. Vector of Field offsets
+    var fields_vec_off = b.create_vector_offsets(field_offs)
+
+    # 5. Schema table
+    b.start_table()
+    b.add_field_i16(0, schema.endianness)
+    b.add_field_offset(1, fields_vec_off)
+    var schema_off = b.end_table()
+
+    # 6. Message table
+    b.start_table()
+    b.add_field_i16(0, Int16(4))        # version = MetadataVersion.V5
+    b.add_field_u8(1, UInt8(1))         # header_type = Schema
+    b.add_field_offset(2, schema_off)   # union value
+    b.add_field_i64(3, Int64(0))        # bodyLength = 0
+    var msg_off = b.end_table()
+
+    # 7. Finalize FlatBuffer and wrap in IPC framing
+    var flatbuf = b.finish(msg_off)
+    return encode_ipc_message(flatbuf, List[UInt8]())
+
+
+fn decode_schema_message(buf: List[UInt8], pos: Int) raises -> Tuple[ArrowSchema, Int]:
+    """
+    Decode an IPC Schema message from buf at pos.
+    Returns (schema, next_pos).
+    Raises if header_type != Schema or if the buffer is malformed.
+    """
+    # S7: validate pos
+    if pos < 0:
+        raise Error("arrow: decode_schema_message: negative pos")
+
+    var ipc_result = decode_ipc_message(buf, pos)
+    var metadata = ipc_result[0].copy()
+    var next_pos  = ipc_result[2]
+
+    var r = FlatBuffersReader(metadata)
+    var msg_tp = r.root()
+
+    # Validate this is a Schema message (header_type slot 1 must be 1)
+    var header_type = r.read_u8(msg_tp, 1)
+    if header_type != UInt8(1):
+        raise Error("arrow: decode_schema_message: invalid header_type (expected Schema)")
+
+    # Read Schema table via union_table (slot 2 is the union value offset)
+    var schema_tp = r.union_table(msg_tp, 2)
+
+    var endianness = r.read_i16(schema_tp, 0)
+
+    # Read fields vector
+    var fields_vec = r.read_vector(schema_tp, 1)
+    var n_fields = r.vector_len(fields_vec)
+
+    # S8: cap field count on decode to avoid runaway allocation from corrupt data
+    if n_fields > UInt32(65536):
+        raise Error("arrow: decode_schema_message: field count exceeds limit")
+
+    var fields = List[ArrowField]()
+    for i in range(Int(n_fields)):
+        var field_tp = r.vec_offset(fields_vec, UInt32(i))
+        var name = r.read_string(field_tp, 0)
+        var nullable = r.read_bool(field_tp, 1)
+        var disc = r.union_type(field_tp, 2)
+        var type_tp = r.union_table(field_tp, 3)
+        var arrow_type = decode_arrow_type(r, disc, type_tp)
+        fields.append(ArrowField(name, arrow_type, nullable))
+
+    return Tuple[ArrowSchema, Int](ArrowSchema(fields, endianness), next_pos)
