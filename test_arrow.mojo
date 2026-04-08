@@ -8,6 +8,10 @@ from arrow import (
     decode_arrow_type,
     TYPE_NULL, TYPE_INT, TYPE_FLOAT, TYPE_BINARY, TYPE_UTF8, TYPE_BOOL,
     ArrowInt, ArrowFloat,
+    ArrowField,
+    ArrowSchema,
+    encode_schema_message,
+    decode_schema_message,
 )
 from flatbuffers import (
     read_i32_le, read_u32_le, write_u32_le, write_i32_le,
@@ -340,6 +344,144 @@ fn test_arrow_type_unknown_discriminant_raises() raises:
 
 
 # ============================================================================
+# Phase 3 — Schema message encoding/decoding
+# ============================================================================
+
+
+fn test_schema_empty_fields() raises:
+    """Schema with zero fields encodes and decodes cleanly."""
+    var fields = List[ArrowField]()
+    var schema = ArrowSchema(fields, Int16(0))
+    var buf = encode_schema_message(schema)
+    var result = decode_schema_message(buf, 0)
+    var decoded = result[0].copy()
+    assert_true(len(decoded.fields) == 0, "expected 0 fields")
+    assert_true(decoded.endianness == Int16(0), "expected little-endian")
+
+
+fn test_schema_single_field_int32() raises:
+    """Single Int32 signed non-nullable field roundtrips."""
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("age", ArrowType.int_(32, True), False))
+    var schema = ArrowSchema(fields, Int16(0))
+    var buf = encode_schema_message(schema)
+    var result = decode_schema_message(buf, 0)
+    var decoded = result[0].copy()
+    assert_true(len(decoded.fields) == 1, "expected 1 field")
+    assert_true(decoded.fields[0].name == "age", "wrong name")
+    assert_true(decoded.fields[0].type.tag == TYPE_INT(), "wrong type tag")
+    assert_true(decoded.fields[0].type.int_meta.bit_width == Int32(32), "wrong bit_width")
+    assert_true(decoded.fields[0].type.int_meta.is_signed == True, "wrong is_signed")
+    assert_true(decoded.fields[0].nullable == False, "expected non-nullable")
+
+
+fn test_schema_nullable_field() raises:
+    """nullable=True roundtrips correctly."""
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("score", ArrowType.float_(2), True))
+    var schema = ArrowSchema(fields, Int16(0))
+    var buf = encode_schema_message(schema)
+    var result = decode_schema_message(buf, 0)
+    var decoded = result[0].copy()
+    assert_true(decoded.fields[0].nullable == True, "expected nullable=True")
+
+
+fn test_schema_field_name_roundtrip() raises:
+    """Field name string survives encode→decode exactly."""
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("hello_world_123", ArrowType.utf8(), False))
+    var schema = ArrowSchema(fields, Int16(0))
+    var buf = encode_schema_message(schema)
+    var result = decode_schema_message(buf, 0)
+    var decoded = result[0].copy()
+    assert_true(decoded.fields[0].name == "hello_world_123", "name mismatch")
+
+
+fn test_schema_multiple_fields() raises:
+    """Three fields of different types roundtrip in order."""
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("id", ArrowType.int_(64, False), False))
+    fields.append(ArrowField("name", ArrowType.utf8(), True))
+    fields.append(ArrowField("active", ArrowType.bool_(), False))
+    var schema = ArrowSchema(fields, Int16(0))
+    var buf = encode_schema_message(schema)
+    var result = decode_schema_message(buf, 0)
+    var decoded = result[0].copy()
+    assert_true(len(decoded.fields) == 3, "expected 3 fields")
+    assert_true(decoded.fields[0].name == "id", "field 0 name")
+    assert_true(decoded.fields[0].type.tag == TYPE_INT(), "field 0 type")
+    assert_true(decoded.fields[0].type.int_meta.bit_width == Int32(64), "field 0 width")
+    assert_true(decoded.fields[0].type.int_meta.is_signed == False, "field 0 signed")
+    assert_true(decoded.fields[1].name == "name", "field 1 name")
+    assert_true(decoded.fields[1].type.tag == TYPE_UTF8(), "field 1 type")
+    assert_true(decoded.fields[1].nullable == True, "field 1 nullable")
+    assert_true(decoded.fields[2].name == "active", "field 2 name")
+    assert_true(decoded.fields[2].type.tag == TYPE_BOOL(), "field 2 type")
+
+
+fn test_schema_all_types() raises:
+    """One field per Arrow type (6 fields) roundtrips correctly."""
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("f_null", ArrowType.null(), False))
+    fields.append(ArrowField("f_int", ArrowType.int_(16, True), False))
+    fields.append(ArrowField("f_float", ArrowType.float_(1), False))
+    fields.append(ArrowField("f_binary", ArrowType.binary(), False))
+    fields.append(ArrowField("f_utf8", ArrowType.utf8(), False))
+    fields.append(ArrowField("f_bool", ArrowType.bool_(), False))
+    var schema = ArrowSchema(fields, Int16(0))
+    var buf = encode_schema_message(schema)
+    var result = decode_schema_message(buf, 0)
+    var decoded = result[0].copy()
+    assert_true(len(decoded.fields) == 6, "expected 6 fields")
+    assert_true(decoded.fields[0].type.tag == TYPE_NULL(), "null type")
+    assert_true(decoded.fields[1].type.tag == TYPE_INT(), "int type")
+    assert_true(decoded.fields[1].type.int_meta.bit_width == Int32(16), "int width")
+    assert_true(decoded.fields[2].type.tag == TYPE_FLOAT(), "float type")
+    assert_true(decoded.fields[2].type.float_meta.precision == UInt16(1), "float prec")
+    assert_true(decoded.fields[3].type.tag == TYPE_BINARY(), "binary type")
+    assert_true(decoded.fields[4].type.tag == TYPE_UTF8(), "utf8 type")
+    assert_true(decoded.fields[5].type.tag == TYPE_BOOL(), "bool type")
+
+
+fn test_decode_schema_wrong_header_type() raises:
+    """Decoding a message with header_type != 1 raises."""
+    # Encode a valid schema message then corrupt the header_type byte
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("x", ArrowType.int_(32, True), False))
+    var schema = ArrowSchema(fields, Int16(0))
+    var buf = encode_schema_message(schema)
+    # Encode another schema to use as a "not-schema" message by
+    # building a minimal IPC message with header_type=2 (RecordBatch)
+    var raised = False
+    try:
+        # Build a fake message where header_type byte in the FlatBuffers table = 2
+        # Easiest: hand-craft a minimal FlatBuffers message with header_type=2
+        var b = FlatBufferBuilder(128)
+        b.start_table()
+        b.add_field_i16(0, Int16(4))
+        b.add_field_u8(1, UInt8(2))   # header_type = RecordBatch, not Schema
+        b.add_field_i64(3, Int64(0))
+        var msg_off = b.end_table()
+        var flatbuf = b.finish(msg_off)
+        var fake_buf = encode_ipc_message(flatbuf, List[UInt8]())
+        _ = decode_schema_message(fake_buf, 0)
+    except:
+        raised = True
+    assert_true(raised, "wrong header_type must raise")
+
+
+fn test_schema_endianness_roundtrip() raises:
+    """endianness=1 (big-endian) roundtrips correctly."""
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("x", ArrowType.int_(32, True), False))
+    var schema = ArrowSchema(fields, Int16(1))
+    var buf = encode_schema_message(schema)
+    var result = decode_schema_message(buf, 0)
+    var decoded = result[0].copy()
+    assert_true(decoded.endianness == Int16(1), "expected endianness=1")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -379,6 +521,16 @@ fn main() raises:
     run_test("test_arrow_type_utf8_tag", passed, failed, test_arrow_type_utf8_tag)
     run_test("test_arrow_type_bool_tag", passed, failed, test_arrow_type_bool_tag)
     run_test("test_arrow_type_unknown_discriminant_raises", passed, failed, test_arrow_type_unknown_discriminant_raises)
+
+    # Phase 3 — Schema message encoding/decoding
+    run_test("test_schema_empty_fields", passed, failed, test_schema_empty_fields)
+    run_test("test_schema_single_field_int32", passed, failed, test_schema_single_field_int32)
+    run_test("test_schema_nullable_field", passed, failed, test_schema_nullable_field)
+    run_test("test_schema_field_name_roundtrip", passed, failed, test_schema_field_name_roundtrip)
+    run_test("test_schema_multiple_fields", passed, failed, test_schema_multiple_fields)
+    run_test("test_schema_all_types", passed, failed, test_schema_all_types)
+    run_test("test_decode_schema_wrong_header_type", passed, failed, test_decode_schema_wrong_header_type)
+    run_test("test_schema_endianness_roundtrip", passed, failed, test_schema_endianness_roundtrip)
 
     # Security / adversarial tests
     run_test("test_adversarial_ipc_pad8_overflow", passed, failed, test_adversarial_ipc_pad8_overflow)
