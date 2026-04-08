@@ -377,19 +377,21 @@ fn encode_schema_message(schema: ArrowSchema) raises -> List[UInt8]:
     # Build each Field table bottom-up, collecting offsets
     var field_offs = List[UInt32]()
     for i in range(len(schema.fields)):
-        # P3: access fields directly — no copy needed since we only borrow for encoding
+        # Explicit copy to ensure safe ownership before FlatBuffer mutations
+        var f = schema.fields[i].copy()
+
         # 1. Build type sub-table (must precede start_table for Field)
-        var type_result = encode_arrow_type(b, schema.fields[i].type)
+        var type_result = encode_arrow_type(b, f.type)
         var type_disc = type_result[0]
         var type_off  = type_result[1]
 
         # 2. Create name string (must precede start_table for Field)
-        var name_off = b.create_string(schema.fields[i].name)
+        var name_off = b.create_string(f.name)
 
         # 3. Build Field table
         b.start_table()
         b.add_field_offset(0, name_off)
-        b.add_field_bool(1, schema.fields[i].nullable)
+        b.add_field_bool(1, f.nullable)
         b.add_field_u8(2, type_disc)     # union discriminant
         b.add_field_offset(3, type_off)  # union value
         # slot 4 (children) intentionally absent — Phase 3 has no nested types
