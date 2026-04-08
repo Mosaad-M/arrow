@@ -1,0 +1,12 @@
+{
+  "mojo_version": "0.26.1",
+  "packages": [
+    {
+      "name": "flatbuffers",
+      "version": "1.0.1",
+      "source_url": "https://github.com/Mosaad-M/flatbuffers/archive/refs/tags/v1.0.1.tar.gz",
+      "sha256": "fbf63783cfeb744a391e7411ad3d30bb97fd94b401068057e4f290d88a52e181",
+      "install_path": "/home/mmosaad/.mojo/packages/flatbuffers/1.0.1"
+    }
+  ]
+}
