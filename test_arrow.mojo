@@ -2,8 +2,16 @@ from arrow import (
     ipc_pad8,
     encode_ipc_message,
     encode_eos,
+    ArrowType,
+    encode_arrow_type,
+    decode_arrow_type,
+    TYPE_NULL, TYPE_INT, TYPE_FLOAT, TYPE_BINARY, TYPE_UTF8, TYPE_BOOL,
+    ArrowInt, ArrowFloat,
 )
-from flatbuffers import read_i32_le, read_u32_le, write_u32_le, write_i32_le
+from flatbuffers import (
+    read_i32_le, read_u32_le, write_u32_le, write_i32_le,
+    FlatBufferBuilder, FlatBuffersReader,
+)
 
 
 # ============================================================================
@@ -147,6 +155,94 @@ fn test_encode_eos_exact_bytes() raises:
 
 
 # ============================================================================
+# Phase 2 — Arrow type encoding/decoding
+# ============================================================================
+
+
+fn _roundtrip_type(t: ArrowType) raises -> ArrowType:
+    """Encode t into a FlatBuffers Message with the type union, then decode."""
+    var b = FlatBufferBuilder(128)
+    var disc_and_off = encode_arrow_type(b, t)
+    var disc = disc_and_off[0]
+    var type_off = disc_and_off[1]
+    # Build a minimal wrapper table to hold the union (type at slot 2, value at slot 3)
+    b.start_table()
+    b.add_field_u8(2, disc)
+    b.add_field_offset(3, type_off)
+    var root = b.end_table()
+    var buf = b.finish(root)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var d = r.union_type(tp, 2)
+    var vtp = r.union_table(tp, 3)
+    return decode_arrow_type(r, d, vtp)
+
+
+fn test_arrow_type_null_tag() raises:
+    var t = ArrowType.null()
+    assert_eq_u8(t.tag, TYPE_NULL(), "null tag")
+    var rt = _roundtrip_type(t)
+    assert_eq_u8(rt.tag, TYPE_NULL(), "null roundtrip tag")
+
+
+fn test_arrow_type_int32_signed() raises:
+    var t = ArrowType.int_(Int32(32), True)
+    var rt = _roundtrip_type(t)
+    assert_eq_u8(rt.tag, TYPE_INT(), "int32 tag")
+    assert_eq_i32(rt.int_meta.bit_width, Int32(32), "bit_width")
+    assert_true(rt.int_meta.is_signed, "is_signed")
+
+
+fn test_arrow_type_int64_unsigned() raises:
+    var t = ArrowType.int_(Int32(64), False)
+    var rt = _roundtrip_type(t)
+    assert_eq_u8(rt.tag, TYPE_INT(), "int64 tag")
+    assert_eq_i32(rt.int_meta.bit_width, Int32(64), "bit_width")
+    assert_true(not rt.int_meta.is_signed, "not is_signed")
+
+
+fn test_arrow_type_float_single() raises:
+    var t = ArrowType.float_(UInt16(1))
+    var rt = _roundtrip_type(t)
+    assert_eq_u8(rt.tag, TYPE_FLOAT(), "float single tag")
+    assert_eq_u8(UInt8(rt.float_meta.precision), UInt8(1), "precision=1")
+
+
+fn test_arrow_type_float_double() raises:
+    var t = ArrowType.float_(UInt16(2))
+    var rt = _roundtrip_type(t)
+    assert_eq_u8(rt.tag, TYPE_FLOAT(), "float double tag")
+    assert_eq_u8(UInt8(rt.float_meta.precision), UInt8(2), "precision=2")
+
+
+fn test_arrow_type_utf8_tag() raises:
+    var t = ArrowType.utf8()
+    var rt = _roundtrip_type(t)
+    assert_eq_u8(rt.tag, TYPE_UTF8(), "utf8 tag")
+
+
+fn test_arrow_type_bool_tag() raises:
+    var t = ArrowType.bool_()
+    var rt = _roundtrip_type(t)
+    assert_eq_u8(rt.tag, TYPE_BOOL(), "bool tag")
+
+
+fn test_arrow_type_unknown_discriminant_raises() raises:
+    var b = FlatBufferBuilder(64)
+    b.start_table()
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var raised = False
+    try:
+        _ = decode_arrow_type(r, UInt8(99), tp)
+    except:
+        raised = True
+    assert_true(raised, "unknown discriminant must raise")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -176,6 +272,16 @@ fn main() raises:
     run_test("test_encode_ipc_message_body_aligned", passed, failed, test_encode_ipc_message_body_aligned)
     run_test("test_encode_ipc_message_empty_body", passed, failed, test_encode_ipc_message_empty_body)
     run_test("test_encode_eos_exact_bytes", passed, failed, test_encode_eos_exact_bytes)
+
+    # Phase 2 — Arrow type encoding/decoding
+    run_test("test_arrow_type_null_tag", passed, failed, test_arrow_type_null_tag)
+    run_test("test_arrow_type_int32_signed", passed, failed, test_arrow_type_int32_signed)
+    run_test("test_arrow_type_int64_unsigned", passed, failed, test_arrow_type_int64_unsigned)
+    run_test("test_arrow_type_float_single", passed, failed, test_arrow_type_float_single)
+    run_test("test_arrow_type_float_double", passed, failed, test_arrow_type_float_double)
+    run_test("test_arrow_type_utf8_tag", passed, failed, test_arrow_type_utf8_tag)
+    run_test("test_arrow_type_bool_tag", passed, failed, test_arrow_type_bool_tag)
+    run_test("test_arrow_type_unknown_discriminant_raises", passed, failed, test_arrow_type_unknown_discriminant_raises)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:
