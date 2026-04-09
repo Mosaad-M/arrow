@@ -12,9 +12,21 @@ from arrow import (
     ArrowSchema,
     encode_schema_message,
     decode_schema_message,
+    FieldNode,
+    BufferDesc,
+    encode_record_batch_message,
+    decode_record_batch_message,
+    ArrowArray,
+    encode_array,
+    decode_array,
+    encode_record_batch,
+    decode_record_batch,
+    RecordBatch,
+    encode_arrow_file,
+    decode_arrow_file,
 )
 from flatbuffers import (
-    read_i32_le, read_u32_le, write_u32_le, write_i32_le,
+    read_i32_le, read_u32_le, read_f64_le, write_u32_le, write_i32_le, write_f64_le,
     FlatBufferBuilder, FlatBuffersReader,
 )
 
@@ -484,6 +496,656 @@ fn test_schema_endianness_roundtrip() raises:
 
 
 # ============================================================================
+# Phase 4 — RecordBatch message encoding/decoding
+# ============================================================================
+
+
+fn test_rb_empty() raises:
+    """0 rows, 0 nodes, 0 buffers, empty body encodes/decodes cleanly."""
+    var nodes = List[FieldNode]()
+    var buffers = List[BufferDesc]()
+    var body = List[UInt8]()
+    var buf = encode_record_batch_message(Int64(0), nodes, buffers, body)
+    _ = len(buf)
+    var result = decode_record_batch_message(buf, 0)
+    assert_true(result[0] == Int64(0), "length=0")
+    assert_true(len(result[1]) == 0, "nodes empty")
+    assert_true(len(result[2]) == 0, "buffers empty")
+    assert_true(len(result[3]) == 0, "body empty")
+
+
+fn test_rb_row_count() raises:
+    """length field roundtrips exactly."""
+    var buf = encode_record_batch_message(
+        Int64(1000), List[FieldNode](), List[BufferDesc](), List[UInt8]()
+    )
+    _ = len(buf)
+    var result = decode_record_batch_message(buf, 0)
+    assert_true(result[0] == Int64(1000), "length=1000")
+
+
+fn test_rb_single_node() raises:
+    """Single FieldNode (length=5, null_count=2) roundtrips."""
+    var nodes = List[FieldNode]()
+    nodes.append(FieldNode(Int64(5), Int64(2)))
+    var buf = encode_record_batch_message(
+        Int64(5), nodes, List[BufferDesc](), List[UInt8]()
+    )
+    _ = len(buf)
+    var result = decode_record_batch_message(buf, 0)
+    var decoded_nodes = result[1].copy()
+    assert_true(len(decoded_nodes) == 1, "1 node")
+    assert_true(decoded_nodes[0].length == Int64(5), "node.length=5")
+    assert_true(decoded_nodes[0].null_count == Int64(2), "node.null_count=2")
+
+
+fn test_rb_multi_node() raises:
+    """3 FieldNodes in order with all values preserved."""
+    var nodes = List[FieldNode]()
+    nodes.append(FieldNode(Int64(10), Int64(0)))
+    nodes.append(FieldNode(Int64(20), Int64(3)))
+    nodes.append(FieldNode(Int64(30), Int64(7)))
+    var buf = encode_record_batch_message(
+        Int64(30), nodes, List[BufferDesc](), List[UInt8]()
+    )
+    _ = len(buf)
+    var result = decode_record_batch_message(buf, 0)
+    var n = result[1].copy()
+    assert_true(len(n) == 3, "3 nodes")
+    assert_true(n[0].length == Int64(10) and n[0].null_count == Int64(0), "node0")
+    assert_true(n[1].length == Int64(20) and n[1].null_count == Int64(3), "node1")
+    assert_true(n[2].length == Int64(30) and n[2].null_count == Int64(7), "node2")
+
+
+fn test_rb_single_buffer() raises:
+    """Single BufferDesc (offset=0, length=20) roundtrips."""
+    var buffers = List[BufferDesc]()
+    buffers.append(BufferDesc(Int64(0), Int64(20)))
+    var buf = encode_record_batch_message(
+        Int64(5), List[FieldNode](), buffers, List[UInt8]()
+    )
+    _ = len(buf)
+    var result = decode_record_batch_message(buf, 0)
+    var bd = result[2].copy()
+    assert_true(len(bd) == 1, "1 buffer desc")
+    assert_true(bd[0].offset == Int64(0), "offset=0")
+    assert_true(bd[0].length == Int64(20), "length=20")
+
+
+fn test_rb_multi_buffer() raises:
+    """6 BufferDescs with varying offsets/lengths all roundtrip."""
+    var buffers = List[BufferDesc]()
+    buffers.append(BufferDesc(Int64(0),   Int64(0)))
+    buffers.append(BufferDesc(Int64(0),   Int64(40)))
+    buffers.append(BufferDesc(Int64(40),  Int64(0)))
+    buffers.append(BufferDesc(Int64(40),  Int64(80)))
+    buffers.append(BufferDesc(Int64(120), Int64(0)))
+    buffers.append(BufferDesc(Int64(120), Int64(16)))
+    var buf = encode_record_batch_message(
+        Int64(10), List[FieldNode](), buffers, List[UInt8]()
+    )
+    _ = len(buf)
+    var result = decode_record_batch_message(buf, 0)
+    var bd = result[2].copy()
+    assert_true(len(bd) == 6, "6 buffer descs")
+    assert_true(bd[0].offset == Int64(0)   and bd[0].length == Int64(0),   "bd0")
+    assert_true(bd[1].offset == Int64(0)   and bd[1].length == Int64(40),  "bd1")
+    assert_true(bd[3].offset == Int64(40)  and bd[3].length == Int64(80),  "bd3")
+    assert_true(bd[5].offset == Int64(120) and bd[5].length == Int64(16),  "bd5")
+
+
+fn test_rb_body_passthrough() raises:
+    """Body bytes are preserved exactly through encode/decode."""
+    var body = List[UInt8]()
+    for i in range(16):
+        body.append(UInt8(i * 17 % 256))
+    var buf = encode_record_batch_message(
+        Int64(4), List[FieldNode](), List[BufferDesc](), body
+    )
+    _ = len(buf)
+    var result = decode_record_batch_message(buf, 0)
+    var decoded_body = result[3].copy()
+    assert_true(len(decoded_body) == 16, "body length=16")
+    for i in range(16):
+        assert_true(
+            decoded_body[i] == UInt8(i * 17 % 256),
+            "body[" + String(i) + "]"
+        )
+
+
+fn test_decode_rb_wrong_header_type() raises:
+    """Decoding a Schema message (header_type=1) as RecordBatch raises."""
+    var fields = List[ArrowField]()
+    var schema = ArrowSchema(fields, Int16(0))
+    var schema_buf = encode_schema_message(schema)
+    var raised = False
+    try:
+        _ = decode_record_batch_message(schema_buf, 0)
+    except:
+        raised = True
+    assert_true(raised, "expected raise for wrong header_type")
+
+
+fn test_decode_rb_negative_pos() raises:
+    """Negative pos raises immediately."""
+    var buf = List[UInt8]()
+    for _ in range(16):
+        buf.append(UInt8(0))
+    var raised = False
+    try:
+        _ = decode_record_batch_message(buf, -1)
+    except:
+        raised = True
+    assert_true(raised, "expected raise for pos=-1")
+
+
+# ============================================================================
+# Phase 5 — ArrowArray typed column encoding/decoding
+# ============================================================================
+
+
+fn _write_i32_le_into(mut buf: List[UInt8], val: Int32):
+    """Append 4 LE bytes for val to buf."""
+    var v = Int64(val)
+    buf.append(UInt8(v & Int64(0xFF)))
+    buf.append(UInt8((v >> 8) & Int64(0xFF)))
+    buf.append(UInt8((v >> 16) & Int64(0xFF)))
+    buf.append(UInt8((v >> 24) & Int64(0xFF)))
+
+
+fn _write_i64_le_into(mut buf: List[UInt8], val: Int64):
+    """Append 8 LE bytes for val to buf."""
+    buf.append(UInt8(val & Int64(0xFF)))
+    buf.append(UInt8((val >> 8) & Int64(0xFF)))
+    buf.append(UInt8((val >> 16) & Int64(0xFF)))
+    buf.append(UInt8((val >> 24) & Int64(0xFF)))
+    buf.append(UInt8((val >> 32) & Int64(0xFF)))
+    buf.append(UInt8((val >> 40) & Int64(0xFF)))
+    buf.append(UInt8((val >> 48) & Int64(0xFF)))
+    buf.append(UInt8((val >> 56) & Int64(0xFF)))
+
+
+fn _read_i32_from(buf: List[UInt8], pos: Int) -> Int32:
+    """Read 4 LE bytes as Int32."""
+    var v = (
+        Int64(buf[pos])
+        | (Int64(buf[pos + 1]) << 8)
+        | (Int64(buf[pos + 2]) << 16)
+        | (Int64(buf[pos + 3]) << 24)
+    )
+    return Int32(v)
+
+
+
+
+fn test_encode_array_int32_no_nulls() raises:
+    """Int32 array with no nulls: validity buffer is absent (length=0), values correct."""
+    var values = List[UInt8]()
+    _write_i32_le_into(values, Int32(10))
+    _write_i32_le_into(values, Int32(20))
+    _write_i32_le_into(values, Int32(30))
+    var arr = ArrowArray(ArrowType.int_(32, True), 3, 0, List[UInt8](), List[UInt8](), values)
+
+    var result = encode_array(arr, 0)
+    var node = result[0].copy()
+    var descs = result[1].copy()
+    var body = result[2].copy()
+    _ = len(body)
+
+    # 2 buffers: validity (length=0) and values (12 bytes)
+    assert_true(len(descs) == 2, "2 buffer descs for Int32")
+    assert_true(descs[0].length == Int64(0), "validity buffer absent (length=0)")
+    assert_true(descs[1].length == Int64(12), "values buffer 12 bytes")
+    assert_true(node.length == Int64(3), "node.length=3")
+    assert_true(node.null_count == Int64(0), "node.null_count=0")
+
+    # Decode and verify values
+    var decoded = decode_array(ArrowType.int_(32, True), node, descs, body)
+    _ = len(decoded.values)
+    assert_eq_int(decoded.length, 3, "decoded.length")
+    assert_true(_read_i32_from(decoded.values, 0) == Int32(10), "val[0]=10")
+    assert_true(_read_i32_from(decoded.values, 4) == Int32(20), "val[1]=20")
+    assert_true(_read_i32_from(decoded.values, 8) == Int32(30), "val[2]=30")
+
+
+fn test_encode_array_int32_with_nulls() raises:
+    """Int32 with nulls: validity bitmap set correctly."""
+    # 4 elements: valid=10, null, valid=30, null
+    # Validity bits LSB-first: [1, 0, 1, 0] → byte = 0b00000101 = 5
+    var validity = List[UInt8]()
+    validity.append(UInt8(0b00000101))
+    var values = List[UInt8]()
+    _write_i32_le_into(values, Int32(10))
+    _write_i32_le_into(values, Int32(0))   # null slot
+    _write_i32_le_into(values, Int32(30))
+    _write_i32_le_into(values, Int32(0))   # null slot
+    var arr = ArrowArray(ArrowType.int_(32, True), 4, 2, validity, List[UInt8](), values)
+
+    var result = encode_array(arr, 0)
+    var node = result[0].copy()
+    var descs = result[1].copy()
+    var body = result[2].copy()
+    _ = len(body)
+
+    assert_true(node.null_count == Int64(2), "null_count=2")
+    assert_true(descs[0].length > Int64(0), "validity buffer present when nulls exist")
+
+    var decoded = decode_array(ArrowType.int_(32, True), node, descs, body)
+    _ = len(decoded.validity)
+    # Validity bit 0 = 1 (valid), bit 1 = 0 (null)
+    assert_true(decoded.null_count == 2, "decoded null_count=2")
+    assert_true(len(decoded.validity) > 0, "decoded has validity bitmap")
+    assert_true(decoded.validity[0] == UInt8(0b00000101), "validity byte preserved")
+
+
+fn test_encode_array_int64() raises:
+    """Int64 array roundtrips with correct byte stride (8 bytes/element)."""
+    var values = List[UInt8]()
+    _write_i64_le_into(values, Int64(1000000000000))
+    _write_i64_le_into(values, Int64(-999))
+    var arr = ArrowArray(ArrowType.int_(64, True), 2, 0, List[UInt8](), List[UInt8](), values)
+
+    var result = encode_array(arr, 0)
+    var node = result[0].copy()
+    var descs = result[1].copy()
+    var body = result[2].copy()
+    _ = len(body)
+
+    assert_true(descs[1].length == Int64(16), "values buffer 16 bytes for 2 Int64s")
+    var decoded = decode_array(ArrowType.int_(64, True), node, descs, body)
+    _ = len(decoded.values)
+    assert_eq_int(decoded.length, 2, "decoded.length=2")
+    assert_true(len(decoded.values) == 16, "decoded values 16 bytes")
+
+
+fn test_encode_array_float64() raises:
+    """Float64 array: values buffer is 8 bytes per element."""
+    var values = List[UInt8]()
+    # Use write_f64_le to get the correct IEEE 754 LE byte layout for 3.14
+    for _ in range(8):
+        values.append(UInt8(0))
+    write_f64_le(values, 0, Float64(3.14))
+    var arr = ArrowArray(ArrowType.float_(2), 1, 0, List[UInt8](), List[UInt8](), values)
+
+    var result = encode_array(arr, 0)
+    var node = result[0].copy()
+    var descs = result[1].copy()
+    var body = result[2].copy()
+    _ = len(body)
+
+    assert_true(descs[1].length == Int64(8), "values buffer 8 bytes for 1 Float64")
+    var decoded = decode_array(ArrowType.float_(2), node, descs, body)
+    _ = len(decoded.values)
+    var decoded_val = read_f64_le(decoded.values, 0)
+    assert_true(decoded_val == Float64(3.14), "float64 value preserved: " + String(decoded_val))
+
+
+fn test_encode_array_bool() raises:
+    """Bool array: values are packed bits LSB-first."""
+    # 4 elements: [true, false, true, false] → 0b00000101 = 5
+    var values = List[UInt8]()
+    values.append(UInt8(0b00000101))
+    var arr = ArrowArray(ArrowType.bool_(), 4, 0, List[UInt8](), List[UInt8](), values)
+
+    var result = encode_array(arr, 0)
+    var node = result[0].copy()
+    var descs = result[1].copy()
+    var body = result[2].copy()
+    _ = len(body)
+
+    assert_true(node.length == Int64(4), "node.length=4")
+    var decoded = decode_array(ArrowType.bool_(), node, descs, body)
+    _ = len(decoded.values)
+    assert_true(decoded.values[0] == UInt8(0b00000101), "packed bool byte preserved")
+
+
+fn test_encode_array_utf8() raises:
+    """Utf8 array: offsets + value bytes correct."""
+    # ["hello", "world"]
+    # offsets: [0, 5, 10]
+    # values: helloworld (10 bytes)
+    var offsets = List[UInt8]()
+    _write_i32_le_into(offsets, Int32(0))
+    _write_i32_le_into(offsets, Int32(5))
+    _write_i32_le_into(offsets, Int32(10))
+    var values = List[UInt8]()
+    var s = String("helloworld")
+    var sb = s.as_bytes()
+    for i in range(len(sb)):
+        values.append(sb[i])
+    var arr = ArrowArray(ArrowType.utf8(), 2, 0, List[UInt8](), offsets, values)
+
+    var result = encode_array(arr, 0)
+    var node = result[0].copy()
+    var descs = result[1].copy()
+    var body = result[2].copy()
+    _ = len(body)
+
+    # 3 buffers: validity (absent), offsets (12 bytes), values (10 bytes)
+    assert_true(len(descs) == 3, "3 buffer descs for Utf8")
+    assert_true(descs[0].length == Int64(0), "validity absent (no nulls)")
+    assert_true(descs[1].length == Int64(12), "offsets buffer 12 bytes")
+    assert_true(descs[2].length == Int64(10), "values buffer 10 bytes")
+    assert_true(node.length == Int64(2), "node.length=2")
+
+    var decoded = decode_array(ArrowType.utf8(), node, descs, body)
+    _ = len(decoded.offsets)
+    assert_eq_int(decoded.length, 2, "decoded length=2")
+    # Verify offset[1]=5 (start of second string)
+    var off1 = _read_i32_from(decoded.offsets, 4)
+    assert_true(off1 == Int32(5), "offset[1]=5")
+
+
+fn test_encode_array_null() raises:
+    """Null array: 0 buffers, null_count == length."""
+    var arr = ArrowArray(ArrowType.null(), 5, 5, List[UInt8](), List[UInt8](), List[UInt8]())
+
+    var result = encode_array(arr, 0)
+    var node = result[0].copy()
+    var descs = result[1].copy()
+    var body = result[2].copy()
+    _ = len(body)
+
+    assert_true(len(descs) == 0, "0 buffer descs for Null array")
+    assert_true(node.length == Int64(5), "node.length=5")
+    assert_true(node.null_count == Int64(5), "null_count==length for Null array")
+
+
+fn test_encode_array_null_count() raises:
+    """FieldNode.null_count matches ArrowArray.null_count."""
+    var validity = List[UInt8]()
+    validity.append(UInt8(0b00000001))  # only element 0 is valid
+    var values = List[UInt8]()
+    _write_i32_le_into(values, Int32(42))
+    _write_i32_le_into(values, Int32(0))
+    _write_i32_le_into(values, Int32(0))
+    var arr = ArrowArray(ArrowType.int_(32, True), 3, 2, validity, List[UInt8](), values)
+
+    var result = encode_array(arr, 0)
+    var node = result[0].copy()
+    assert_true(node.null_count == Int64(2), "node.null_count == arr.null_count")
+
+
+fn test_record_batch_encode_decode() raises:
+    """Full roundtrip: 2 columns (Int32, Utf8) encode → decode preserves structure."""
+    # Column 0: Int32, 2 rows, no nulls: [1, 2]
+    var v0 = List[UInt8]()
+    _write_i32_le_into(v0, Int32(1))
+    _write_i32_le_into(v0, Int32(2))
+    var col0 = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v0)
+
+    # Column 1: Utf8, 2 rows, no nulls: ["hi", "bye"]
+    var off1 = List[UInt8]()
+    _write_i32_le_into(off1, Int32(0))
+    _write_i32_le_into(off1, Int32(2))
+    _write_i32_le_into(off1, Int32(5))
+    var v1 = List[UInt8]()
+    v1.append(UInt8(104))  # h
+    v1.append(UInt8(105))  # i
+    v1.append(UInt8(98))   # b
+    v1.append(UInt8(121))  # y
+    v1.append(UInt8(101))  # e
+    var col1 = ArrowArray(ArrowType.utf8(), 2, 0, List[UInt8](), off1, v1)
+
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("id", ArrowType.int_(32, True), False))
+    fields.append(ArrowField("name", ArrowType.utf8(), False))
+    var schema = ArrowSchema(fields, Int16(0))
+
+    var arrays = List[ArrowArray]()
+    arrays.append(col0.copy())
+    arrays.append(col1.copy())
+
+    var buf = encode_record_batch(schema, arrays)
+    _ = len(buf)
+
+    var result = decode_record_batch(buf, 0, schema)
+    var decoded_arrays = result[0].copy()
+    assert_true(len(decoded_arrays) == 2, "2 decoded columns")
+    assert_eq_int(decoded_arrays[0].length, 2, "col0 length=2")
+    assert_eq_int(decoded_arrays[1].length, 2, "col1 length=2")
+    assert_true(_read_i32_from(decoded_arrays[0].values, 0) == Int32(1), "col0[0]=1")
+    assert_true(_read_i32_from(decoded_arrays[0].values, 4) == Int32(2), "col0[1]=2")
+
+
+fn test_record_batch_null_values_preserved() raises:
+    """Null positions survive encode → decode round-trip."""
+    # Int32 column: 3 rows, row 1 is null. Validity byte = 0b00000101
+    var validity = List[UInt8]()
+    validity.append(UInt8(0b00000101))
+    var values = List[UInt8]()
+    _write_i32_le_into(values, Int32(7))
+    _write_i32_le_into(values, Int32(0))
+    _write_i32_le_into(values, Int32(9))
+    var col = ArrowArray(ArrowType.int_(32, True), 3, 1, validity, List[UInt8](), values)
+
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("x", ArrowType.int_(32, True), True))
+    var schema = ArrowSchema(fields, Int16(0))
+
+    var arrays = List[ArrowArray]()
+    arrays.append(col.copy())
+
+    var buf = encode_record_batch(schema, arrays)
+    _ = len(buf)
+
+    var result = decode_record_batch(buf, 0, schema)
+    var decoded_arrays = result[0].copy()
+    var decoded_col = decoded_arrays[0].copy()
+    assert_true(decoded_col.null_count == 1, "null_count=1 preserved")
+    assert_true(len(decoded_col.validity) > 0, "validity bitmap present")
+    assert_true(decoded_col.validity[0] == UInt8(0b00000101), "validity byte preserved")
+
+
+# ============================================================================
+# Phase 6 — IPC File Format (Feather v2)
+# ============================================================================
+
+# Magic bytes: ARROW1\0\0
+fn _arrow_magic() -> List[UInt8]:
+    var m = List[UInt8]()
+    m.append(UInt8(0x41))
+    m.append(UInt8(0x52))
+    m.append(UInt8(0x52))
+    m.append(UInt8(0x4F))
+    m.append(UInt8(0x57))
+    m.append(UInt8(0x31))
+    m.append(UInt8(0x00))
+    m.append(UInt8(0x00))
+    return m^
+
+
+fn _make_simple_schema() -> ArrowSchema:
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("x", ArrowType.int_(32, True), False))
+    return ArrowSchema(fields, Int16(0))
+
+
+fn test_arrow_file_magic_prefix() raises:
+    """First 8 bytes of the encoded file are ARROW1\\0\\0."""
+    var schema = _make_simple_schema()
+    var batches = List[RecordBatch]()
+    var file_bytes = encode_arrow_file(schema, batches)
+    _ = len(file_bytes)
+    var magic = _arrow_magic()
+    assert_true(len(file_bytes) >= 8, "file at least 8 bytes")
+    for i in range(8):
+        assert_eq_u8(file_bytes[i], magic[i], "magic prefix byte " + String(i))
+
+
+fn test_arrow_file_magic_suffix() raises:
+    """Last 8 bytes of the encoded file are ARROW1\\0\\0."""
+    var schema = _make_simple_schema()
+    var batches = List[RecordBatch]()
+    var file_bytes = encode_arrow_file(schema, batches)
+    _ = len(file_bytes)
+    var magic = _arrow_magic()
+    var n = len(file_bytes)
+    assert_true(n >= 8, "file at least 8 bytes")
+    for i in range(8):
+        assert_eq_u8(file_bytes[n - 8 + i], magic[i], "magic suffix byte " + String(i))
+
+
+fn test_arrow_file_footer_size() raises:
+    """Int32 at offset len-12 matches the actual footer byte count."""
+    var schema = _make_simple_schema()
+    var batches = List[RecordBatch]()
+    var file_bytes = encode_arrow_file(schema, batches)
+    _ = len(file_bytes)
+    var n = len(file_bytes)
+    # Layout: ... [footer bytes] [footer_size: i32, 4 bytes] [magic: 8 bytes]
+    assert_true(n >= 12, "file at least 12 bytes")
+    var footer_size = read_i32_le(file_bytes, n - 12)
+    assert_true(footer_size > 0, "footer_size > 0")
+    # footer sits immediately before the last 12 bytes
+    assert_true(n - 12 - Int(footer_size) >= 0, "footer fits in file")
+
+
+fn test_arrow_file_schema_roundtrip() raises:
+    """Schema fields and types survive encode→decode."""
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("id", ArrowType.int_(64, True), False))
+    fields.append(ArrowField("score", ArrowType.float_(2), True))
+    var schema = ArrowSchema(fields, Int16(0))
+    var batches = List[RecordBatch]()
+    var file_bytes = encode_arrow_file(schema, batches)
+    _ = len(file_bytes)
+
+    var result = decode_arrow_file(file_bytes)
+    var dec_schema = result[0].copy()
+    assert_eq_int(len(dec_schema.fields), 2, "2 fields decoded")
+    assert_true(dec_schema.fields[0].name == "id", "field[0].name=id")
+    assert_true(dec_schema.fields[1].name == "score", "field[1].name=score")
+    assert_eq_u8(dec_schema.fields[0].type.tag, TYPE_INT(), "field[0] is Int")
+    assert_eq_u8(dec_schema.fields[1].type.tag, TYPE_FLOAT(), "field[1] is Float")
+
+
+fn test_arrow_file_zero_batches() raises:
+    """Schema-only file decodes to 0 record batches."""
+    var schema = _make_simple_schema()
+    var batches = List[RecordBatch]()
+    var file_bytes = encode_arrow_file(schema, batches)
+    _ = len(file_bytes)
+
+    var result = decode_arrow_file(file_bytes)
+    var dec_batches = result[1].copy()
+    assert_eq_int(len(dec_batches), 0, "0 batches decoded")
+
+
+fn test_arrow_file_single_batch() raises:
+    """One RecordBatch roundtrips with correct column values."""
+    var schema = _make_simple_schema()
+
+    # Column: Int32, 2 rows: [10, 20]
+    var v = List[UInt8]()
+    _write_i32_le_into(v, Int32(10))
+    _write_i32_le_into(v, Int32(20))
+    var col = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v)
+    var cols = List[ArrowArray]()
+    cols.append(col.copy())
+    var batch = RecordBatch(Int64(2), cols)
+    var batches = List[RecordBatch]()
+    batches.append(batch.copy())
+
+    var file_bytes = encode_arrow_file(schema, batches)
+    _ = len(file_bytes)
+
+    var result = decode_arrow_file(file_bytes)
+    var dec_batches = result[1].copy()
+    assert_eq_int(len(dec_batches), 1, "1 batch decoded")
+    assert_true(dec_batches[0].length == Int64(2), "batch length=2")
+    var c0 = dec_batches[0].columns[0].copy()
+    assert_eq_int(c0.length, 2, "col length=2")
+    assert_true(_read_i32_from(c0.values, 0) == Int32(10), "col[0]=10")
+    assert_true(_read_i32_from(c0.values, 4) == Int32(20), "col[1]=20")
+
+
+fn test_arrow_file_multi_batch() raises:
+    """Two RecordBatches: order and values preserved."""
+    var schema = _make_simple_schema()
+
+    # Batch 0: [1]
+    var v0 = List[UInt8]()
+    _write_i32_le_into(v0, Int32(1))
+    var col0 = ArrowArray(ArrowType.int_(32, True), 1, 0, List[UInt8](), List[UInt8](), v0)
+    var cols0 = List[ArrowArray]()
+    cols0.append(col0.copy())
+
+    # Batch 1: [2, 3]
+    var v1 = List[UInt8]()
+    _write_i32_le_into(v1, Int32(2))
+    _write_i32_le_into(v1, Int32(3))
+    var col1 = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v1)
+    var cols1 = List[ArrowArray]()
+    cols1.append(col1.copy())
+
+    var batches = List[RecordBatch]()
+    batches.append(RecordBatch(Int64(1), cols0).copy())
+    batches.append(RecordBatch(Int64(2), cols1).copy())
+
+    var file_bytes = encode_arrow_file(schema, batches)
+    _ = len(file_bytes)
+
+    var result = decode_arrow_file(file_bytes)
+    var dec_batches = result[1].copy()
+    assert_eq_int(len(dec_batches), 2, "2 batches decoded")
+    assert_true(dec_batches[0].length == Int64(1), "batch[0] length=1")
+    assert_true(dec_batches[1].length == Int64(2), "batch[1] length=2")
+    var c00 = dec_batches[0].columns[0].copy()
+    var c10 = dec_batches[1].columns[0].copy()
+    assert_true(_read_i32_from(c00.values, 0) == Int32(1), "batch[0] col[0]=1")
+    assert_true(_read_i32_from(c10.values, 0) == Int32(2), "batch[1] col[0]=2")
+    assert_true(_read_i32_from(c10.values, 4) == Int32(3), "batch[1] col[1]=3")
+
+
+fn test_adversarial_decode_array_negative_offset() raises:
+    """decode_array raises on negative buffer offset (S-P5-1)."""
+    var node = FieldNode(Int64(1), Int64(0))
+    var descs = List[BufferDesc]()
+    descs.append(BufferDesc(Int64(0), Int64(0)))     # validity (absent)
+    descs.append(BufferDesc(Int64(-1), Int64(4)))    # negative offset — must raise
+    var body = List[UInt8]()
+    for _ in range(8):
+        body.append(UInt8(0))
+    var raised = False
+    try:
+        _ = decode_array(ArrowType.int_(32, True), node, descs, body)
+    except:
+        raised = True
+    assert_true(raised, "expected error for negative buffer offset")
+
+
+fn test_adversarial_decode_array_negative_length() raises:
+    """decode_array raises on negative buffer length (S-P5-1)."""
+    var node = FieldNode(Int64(1), Int64(0))
+    var descs = List[BufferDesc]()
+    descs.append(BufferDesc(Int64(0), Int64(-1)))    # negative length — must raise
+    descs.append(BufferDesc(Int64(0), Int64(4)))
+    var body = List[UInt8]()
+    for _ in range(8):
+        body.append(UInt8(0))
+    var raised = False
+    try:
+        _ = decode_array(ArrowType.int_(32, True), node, descs, body)
+    except:
+        raised = True
+    assert_true(raised, "expected error for negative buffer length")
+
+
+fn test_decode_arrow_file_wrong_magic() raises:
+    """Wrong magic prefix raises an error."""
+    var bad = List[UInt8]()
+    for _ in range(8):
+        bad.append(UInt8(0x42))  # not ARROW1\0\0
+    var raised = False
+    try:
+        _ = decode_arrow_file(bad)
+    except:
+        raised = True
+    assert_true(raised, "expected error for wrong magic")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -541,6 +1203,43 @@ fn main() raises:
     run_test("test_adversarial_decode_huge_meta_len", passed, failed, test_adversarial_decode_huge_meta_len)
     run_test("test_adversarial_decode_truncated_buf", passed, failed, test_adversarial_decode_truncated_buf)
     run_test("test_adversarial_encode_arrow_type_bad_tag", passed, failed, test_adversarial_encode_arrow_type_bad_tag)
+
+    # Phase 4 — RecordBatch message encoding/decoding
+    run_test("test_rb_empty", passed, failed, test_rb_empty)
+    run_test("test_rb_row_count", passed, failed, test_rb_row_count)
+    run_test("test_rb_single_node", passed, failed, test_rb_single_node)
+    run_test("test_rb_multi_node", passed, failed, test_rb_multi_node)
+    run_test("test_rb_single_buffer", passed, failed, test_rb_single_buffer)
+    run_test("test_rb_multi_buffer", passed, failed, test_rb_multi_buffer)
+    run_test("test_rb_body_passthrough", passed, failed, test_rb_body_passthrough)
+    run_test("test_decode_rb_wrong_header_type", passed, failed, test_decode_rb_wrong_header_type)
+    run_test("test_decode_rb_negative_pos", passed, failed, test_decode_rb_negative_pos)
+
+    # Phase 5 — ArrowArray typed column encoding/decoding
+    run_test("test_encode_array_int32_no_nulls", passed, failed, test_encode_array_int32_no_nulls)
+    run_test("test_encode_array_int32_with_nulls", passed, failed, test_encode_array_int32_with_nulls)
+    run_test("test_encode_array_int64", passed, failed, test_encode_array_int64)
+    run_test("test_encode_array_float64", passed, failed, test_encode_array_float64)
+    run_test("test_encode_array_bool", passed, failed, test_encode_array_bool)
+    run_test("test_encode_array_utf8", passed, failed, test_encode_array_utf8)
+    run_test("test_encode_array_null", passed, failed, test_encode_array_null)
+    run_test("test_encode_array_null_count", passed, failed, test_encode_array_null_count)
+    run_test("test_record_batch_encode_decode", passed, failed, test_record_batch_encode_decode)
+    run_test("test_record_batch_null_values_preserved", passed, failed, test_record_batch_null_values_preserved)
+
+    # Phase 5 security adversarial tests
+    run_test("test_adversarial_decode_array_negative_offset", passed, failed, test_adversarial_decode_array_negative_offset)
+    run_test("test_adversarial_decode_array_negative_length", passed, failed, test_adversarial_decode_array_negative_length)
+
+    # Phase 6 — IPC File Format (Feather v2)
+    run_test("test_arrow_file_magic_prefix", passed, failed, test_arrow_file_magic_prefix)
+    run_test("test_arrow_file_magic_suffix", passed, failed, test_arrow_file_magic_suffix)
+    run_test("test_arrow_file_footer_size", passed, failed, test_arrow_file_footer_size)
+    run_test("test_arrow_file_schema_roundtrip", passed, failed, test_arrow_file_schema_roundtrip)
+    run_test("test_arrow_file_zero_batches", passed, failed, test_arrow_file_zero_batches)
+    run_test("test_arrow_file_single_batch", passed, failed, test_arrow_file_single_batch)
+    run_test("test_arrow_file_multi_batch", passed, failed, test_arrow_file_multi_batch)
+    run_test("test_decode_arrow_file_wrong_magic", passed, failed, test_decode_arrow_file_wrong_magic)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:
