@@ -365,6 +365,8 @@ fn test_schema_empty_fields() raises:
     var fields = List[ArrowField]()
     var schema = ArrowSchema(fields, Int16(0))
     var buf = encode_schema_message(schema)
+    # barrier: prevent compiler from eliminating encode→decode chain
+    _ = len(buf)
     var result = decode_schema_message(buf, 0)
     var decoded = result[0].copy()
     assert_true(len(decoded.fields) == 0, "expected 0 fields")
@@ -395,6 +397,8 @@ fn test_schema_nullable_field() raises:
     fields.append(ArrowField("score", ArrowType.float_(2), True))
     var schema = ArrowSchema(fields, Int16(0))
     var buf = encode_schema_message(schema)
+    # barrier: prevent compiler from eliminating encode→decode chain
+    _ = len(buf)
     var result = decode_schema_message(buf, 0)
     var decoded = result[0].copy()
     assert_true(decoded.fields[0].nullable == True, "expected nullable=True")
@@ -406,6 +410,8 @@ fn test_schema_field_name_roundtrip() raises:
     fields.append(ArrowField("hello_world_123", ArrowType.utf8(), False))
     var schema = ArrowSchema(fields, Int16(0))
     var buf = encode_schema_message(schema)
+    # barrier: prevent compiler from eliminating encode→decode chain
+    _ = len(buf)
     var result = decode_schema_message(buf, 0)
     var decoded = result[0].copy()
     assert_true(decoded.fields[0].name == "hello_world_123", "name mismatch")
@@ -419,6 +425,8 @@ fn test_schema_multiple_fields() raises:
     fields.append(ArrowField("active", ArrowType.bool_(), False))
     var schema = ArrowSchema(fields, Int16(0))
     var buf = encode_schema_message(schema)
+    # barrier: prevent compiler from eliminating encode→decode chain
+    _ = len(buf)
     var result = decode_schema_message(buf, 0)
     var decoded = result[0].copy()
     assert_true(len(decoded.fields) == 3, "expected 3 fields")
@@ -444,6 +452,8 @@ fn test_schema_all_types() raises:
     fields.append(ArrowField("f_bool", ArrowType.bool_(), False))
     var schema = ArrowSchema(fields, Int16(0))
     var buf = encode_schema_message(schema)
+    # barrier: prevent compiler from eliminating encode→decode chain
+    _ = len(buf)
     var result = decode_schema_message(buf, 0)
     var decoded = result[0].copy()
     assert_true(len(decoded.fields) == 6, "expected 6 fields")
@@ -490,6 +500,8 @@ fn test_schema_endianness_roundtrip() raises:
     fields.append(ArrowField("x", ArrowType.int_(32, True), False))
     var schema = ArrowSchema(fields, Int16(1))
     var buf = encode_schema_message(schema)
+    # barrier: prevent compiler from eliminating encode→decode chain
+    _ = len(buf)
     var result = decode_schema_message(buf, 0)
     var decoded = result[0].copy()
     assert_true(decoded.endianness == Int16(1), "expected endianness=1")
