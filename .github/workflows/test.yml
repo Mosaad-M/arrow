@@ -15,5 +15,7 @@ jobs:
         run: curl -fsSL https://raw.githubusercontent.com/Mosaad-M/mojo-pkg/main/scripts/install.sh | bash
       - name: Install dependencies
         run: ~/.mojo/bin/mojo-pkg install
-      - name: Run tests
+      - name: Run arrow tests
         run: pixi run test-arrow
+      - name: Run CSV arrow tests
+        run: pixi run test-csv-arrow
