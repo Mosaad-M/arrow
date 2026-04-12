@@ -1,4 +1,4 @@
-from pathlib import Path
+from std.pathlib import Path
 from arrow import (
     ArrowType, ArrowField, ArrowSchema, ArrowArray, RecordBatch,
     encode_arrow_file, decode_arrow_file,
