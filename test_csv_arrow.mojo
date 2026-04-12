@@ -13,7 +13,7 @@ from arrow import (
     encode_arrow_file,
 )
 from flatbuffers import read_i32_le, read_i64_le, read_f64_le
-from pathlib import Path
+from std.pathlib import Path
 
 
 fn assert_true(cond: Bool, msg: String = "") raises:
