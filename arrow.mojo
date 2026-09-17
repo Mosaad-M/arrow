@@ -1,3 +1,27 @@
+from dtypes import (
+    AnyDataType,
+    DataType,
+    PrimitiveType,
+    NullType,
+    BoolType,
+    Int8Type,
+    Int16Type,
+    Int32Type,
+    Int64Type,
+    UInt8Type,
+    UInt16Type,
+    UInt32Type,
+    UInt64Type,
+    Float16Type,
+    Float32Type,
+    Float64Type,
+    BinaryType,
+    StringType,
+    dtype_to_format_string,
+    dtype_from_format_string,
+)
+from schema import Field, Schema
+
 from flatbuffers import (
     read_u8, read_u16_le, read_u32_le, read_i32_le, read_i64_le,
     read_u64_le, read_f32_le, read_f64_le,
@@ -11,11 +35,11 @@ from flatbuffers import (
 # Phase 1 — IPC message framing
 # ============================================================================
 
-fn _ipc_continuation() -> UInt32:
+def _ipc_continuation() -> UInt32:
     return UInt32(0xFFFFFFFF)
 
 
-fn ipc_pad8(size: Int) raises -> Int:
+def ipc_pad8(size: Int) raises -> Int:
     """Return the smallest multiple of 8 >= size. Raises on negative or huge input."""
     if size < 0:
         raise Error("arrow: ipc_pad8: negative size")
@@ -26,11 +50,11 @@ fn ipc_pad8(size: Int) raises -> Int:
 
 
 # 1 GB hard cap per IPC message — matches flatbuffers._grow() guard philosophy
-fn _max_ipc_msg() -> Int:
+def _max_ipc_msg() -> Int:
     return 1 << 30
 
 
-fn encode_ipc_message(metadata: List[UInt8], body: List[UInt8]) raises -> List[UInt8]:
+def encode_ipc_message(metadata: List[UInt8], body: List[UInt8]) raises -> List[UInt8]:
     """
     Encode one IPC message:
       [0xFFFFFFFF: u32 LE]         continuation marker
@@ -82,7 +106,7 @@ fn encode_ipc_message(metadata: List[UInt8], body: List[UInt8]) raises -> List[U
     return out^
 
 
-fn decode_ipc_message(buf: List[UInt8], pos: Int) raises -> Tuple[List[UInt8], List[UInt8], Int]:
+def decode_ipc_message(buf: List[UInt8], pos: Int) raises -> Tuple[List[UInt8], List[UInt8], Int]:
     """
     Parse one IPC message from buf at pos.
     Returns (metadata_bytes, body_bytes, next_pos).
@@ -137,7 +161,7 @@ fn decode_ipc_message(buf: List[UInt8], pos: Int) raises -> Tuple[List[UInt8], L
     return Tuple[List[UInt8], List[UInt8], Int](metadata^, body^, padded_body_end)
 
 
-fn encode_eos() -> List[UInt8]:
+def encode_eos() -> List[UInt8]:
     """Returns the 8-byte IPC end-of-stream marker."""
     var out = List[UInt8](capacity=8)
     out.append(UInt8(0xFF))
@@ -155,22 +179,22 @@ fn encode_eos() -> List[UInt8]:
 # Phase 2 — Arrow type encoding/decoding
 # ============================================================================
 
-fn TYPE_NULL() -> UInt8:
+def TYPE_NULL() -> UInt8:
     return UInt8(1)
 
-fn TYPE_INT() -> UInt8:
+def TYPE_INT() -> UInt8:
     return UInt8(2)
 
-fn TYPE_FLOAT() -> UInt8:
+def TYPE_FLOAT() -> UInt8:
     return UInt8(3)
 
-fn TYPE_BINARY() -> UInt8:
+def TYPE_BINARY() -> UInt8:
     return UInt8(4)
 
-fn TYPE_UTF8() -> UInt8:
+def TYPE_UTF8() -> UInt8:
     return UInt8(5)
 
-fn TYPE_BOOL() -> UInt8:
+def TYPE_BOOL() -> UInt8:
     return UInt8(6)
 
 
@@ -191,7 +215,7 @@ struct ArrowInt(Copyable, Movable):
         self.bit_width = take.bit_width
         self.is_signed = take.is_signed
 
-    fn copy(self) -> Self:
+    def copy(self) -> Self:
         return Self(self.bit_width, self.is_signed)
 
 
@@ -208,7 +232,7 @@ struct ArrowFloat(Copyable, Movable):
     fn __moveinit__(out self, deinit take: Self):
         self.precision = take.precision
 
-    fn copy(self) -> Self:
+    def copy(self) -> Self:
         return Self(self.precision)
 
 
@@ -233,35 +257,35 @@ struct ArrowType(Copyable, Movable):
         self.int_meta = take.int_meta.copy()
         self.float_meta = take.float_meta.copy()
 
-    fn copy(self) -> Self:
+    def copy(self) -> Self:
         return Self(self.tag, self.int_meta.bit_width, self.int_meta.is_signed, self.float_meta.precision)
 
     @staticmethod
-    fn null() -> ArrowType:
+    def null() -> ArrowType:
         return ArrowType(TYPE_NULL(), 0, False, 0)
 
     @staticmethod
-    fn int_(bit_width: Int32, is_signed: Bool) -> ArrowType:
+    def int_(bit_width: Int32, is_signed: Bool) -> ArrowType:
         return ArrowType(TYPE_INT(), bit_width, is_signed, 0)
 
     @staticmethod
-    fn float_(precision: UInt16) -> ArrowType:
+    def float_(precision: UInt16) -> ArrowType:
         return ArrowType(TYPE_FLOAT(), 0, False, precision)
 
     @staticmethod
-    fn binary() -> ArrowType:
+    def binary() -> ArrowType:
         return ArrowType(TYPE_BINARY(), 0, False, 0)
 
     @staticmethod
-    fn utf8() -> ArrowType:
+    def utf8() -> ArrowType:
         return ArrowType(TYPE_UTF8(), 0, False, 0)
 
     @staticmethod
-    fn bool_() -> ArrowType:
+    def bool_() -> ArrowType:
         return ArrowType(TYPE_BOOL(), 0, False, 0)
 
 
-fn encode_arrow_type(mut b: FlatBufferBuilder, t: ArrowType) raises -> Tuple[UInt8, UInt32]:
+def encode_arrow_type(mut b: FlatBufferBuilder, t: ArrowType) raises -> Tuple[UInt8, UInt32]:
     """
     Builds the type table in b and returns (discriminant, table_offset).
     Build order: type table must be built before the Field table that references it.
@@ -293,7 +317,7 @@ fn encode_arrow_type(mut b: FlatBufferBuilder, t: ArrowType) raises -> Tuple[UIn
         return Tuple[UInt8, UInt32](disc, off)
 
 
-fn decode_arrow_type(r: FlatBuffersReader, discriminant: UInt8, type_tp: UInt32) raises -> ArrowType:
+def decode_arrow_type(r: FlatBuffersReader, discriminant: UInt8, type_tp: UInt32) raises -> ArrowType:
     """Reads the type table at type_tp and returns an ArrowType."""
     # P1: locals eliminate repeated function calls
     var T_NULL  = UInt8(1)
@@ -347,7 +371,7 @@ struct ArrowField(Copyable, Movable):
         self.type = take.type^
         self.nullable = take.nullable
 
-    fn copy(self) -> Self:
+    def copy(self) -> Self:
         return Self(self.name, self.type.copy(), self.nullable)
 
 
@@ -373,7 +397,7 @@ struct ArrowSchema(Copyable, Movable):
         self.endianness = take.endianness
 
 
-fn encode_schema_message(schema: ArrowSchema) raises -> List[UInt8]:
+def encode_schema_message(schema: ArrowSchema) raises -> List[UInt8]:
     """
     Encode an ArrowSchema as an IPC Schema message.
     Layout (FlatBuffers, bottom-up):
@@ -437,7 +461,7 @@ fn encode_schema_message(schema: ArrowSchema) raises -> List[UInt8]:
     return encode_ipc_message(flatbuf, List[UInt8]())
 
 
-fn decode_schema_message(buf: List[UInt8], pos: Int) raises -> Tuple[ArrowSchema, Int]:
+def decode_schema_message(buf: List[UInt8], pos: Int) raises -> Tuple[ArrowSchema, Int]:
     """
     Decode an IPC Schema message from buf at pos.
     Returns (schema, next_pos).
@@ -508,7 +532,7 @@ struct FieldNode(Copyable, Movable):
         self.length = take.length
         self.null_count = take.null_count
 
-    fn copy(self) -> Self:
+    def copy(self) -> Self:
         return Self(self.length, self.null_count)
 
 
@@ -530,11 +554,11 @@ struct BufferDesc(Copyable, Movable):
         self.offset = take.offset
         self.length = take.length
 
-    fn copy(self) -> Self:
+    def copy(self) -> Self:
         return Self(self.offset, self.length)
 
 
-fn _field_node_bytes(node: FieldNode) -> List[UInt8]:
+def _field_node_bytes(node: FieldNode) -> List[UInt8]:
     """Serialize a FieldNode as 16 LE bytes: [length:i64][null_count:i64]."""
     var result = List[UInt8](capacity=16)
     for _ in range(16):
@@ -544,7 +568,7 @@ fn _field_node_bytes(node: FieldNode) -> List[UInt8]:
     return result^
 
 
-fn _buffer_desc_bytes(bd: BufferDesc) -> List[UInt8]:
+def _buffer_desc_bytes(bd: BufferDesc) -> List[UInt8]:
     """Serialize a BufferDesc as 16 LE bytes: [offset:i64][length:i64]."""
     var result = List[UInt8](capacity=16)
     for _ in range(16):
@@ -554,17 +578,17 @@ fn _buffer_desc_bytes(bd: BufferDesc) -> List[UInt8]:
     return result^
 
 
-fn _field_node_from_bytes(data: List[UInt8]) raises -> FieldNode:
+def _field_node_from_bytes(data: List[UInt8]) raises -> FieldNode:
     """Deserialize a FieldNode from 16 LE bytes."""
     return FieldNode(read_i64_le(data, 0), read_i64_le(data, 8))
 
 
-fn _buffer_desc_from_bytes(data: List[UInt8]) raises -> BufferDesc:
+def _buffer_desc_from_bytes(data: List[UInt8]) raises -> BufferDesc:
     """Deserialize a BufferDesc from 16 LE bytes."""
     return BufferDesc(read_i64_le(data, 0), read_i64_le(data, 8))
 
 
-fn encode_record_batch_message(
+def encode_record_batch_message(
     length: Int64,
     nodes: List[FieldNode],
     buffers: List[BufferDesc],
@@ -625,7 +649,7 @@ fn encode_record_batch_message(
     return encode_ipc_message(flatbuf, body)
 
 
-fn decode_record_batch_message(
+def decode_record_batch_message(
     buf: List[UInt8],
     pos: Int,
 ) raises -> Tuple[Int64, List[FieldNode], List[BufferDesc], List[UInt8], Int]:
@@ -738,14 +762,14 @@ struct ArrowArray(Copyable, Movable):
         self.offsets = take.offsets^
         self.values = take.values^
 
-    fn copy(self) -> Self:
+    def copy(self) -> Self:
         return Self(
             self.type, self.length, self.null_count,
             self.validity, self.offsets, self.values,
         )
 
 
-fn encode_array(
+def encode_array(
     arr: ArrowArray,
     body_offset: Int,
 ) raises -> Tuple[FieldNode, List[BufferDesc], List[UInt8]]:
@@ -807,7 +831,7 @@ fn encode_array(
     return Tuple[FieldNode, List[BufferDesc], List[UInt8]](node^, descs^, body^)
 
 
-fn decode_array(
+def decode_array(
     type: ArrowType,
     node: FieldNode,
     descs: List[BufferDesc],
@@ -882,7 +906,7 @@ fn decode_array(
     )
 
 
-fn encode_record_batch(
+def encode_record_batch(
     schema: ArrowSchema,
     arrays: List[ArrowArray],
 ) raises -> List[UInt8]:
@@ -924,7 +948,7 @@ fn encode_record_batch(
     return encode_record_batch_message(row_count, nodes, all_buffers, full_body)
 
 
-fn decode_record_batch(
+def decode_record_batch(
     buf: List[UInt8],
     pos: Int,
     schema: ArrowSchema,
@@ -1000,11 +1024,11 @@ struct RecordBatch(Copyable, Movable):
         self.length = take.length
         self.columns = take.columns^
 
-    fn copy(self) -> Self:
+    def copy(self) -> Self:
         return Self(self.length, self.columns)
 
 
-fn _arrow_magic() -> List[UInt8]:
+def _arrow_magic() -> List[UInt8]:
     """Return the 8-byte Arrow IPC file magic: b'ARROW1\\0\\0'."""
     var m = List[UInt8](capacity=8)
     m.append(UInt8(0x41))
@@ -1018,7 +1042,7 @@ fn _arrow_magic() -> List[UInt8]:
     return m^
 
 
-fn _encode_schema_table(mut b: FlatBufferBuilder, schema: ArrowSchema) raises -> UInt32:
+def _encode_schema_table(mut b: FlatBufferBuilder, schema: ArrowSchema) raises -> UInt32:
     """
     Build the Schema FlatBuffer table into b (no Message envelope).
     Returns the UOffset of the Schema table.
@@ -1048,7 +1072,7 @@ fn _encode_schema_table(mut b: FlatBufferBuilder, schema: ArrowSchema) raises ->
     return b.end_table()
 
 
-fn _block_bytes(file_offset: Int64, meta_len: Int32, body_len: Int64) -> List[UInt8]:
+def _block_bytes(file_offset: Int64, meta_len: Int32, body_len: Int64) -> List[UInt8]:
     """Serialize one Block struct as 24 LE bytes: [offset:i64][metaLen:i32][pad:i32][bodyLen:i64]."""
     var result = List[UInt8](capacity=24)
     for _ in range(24):
@@ -1060,19 +1084,19 @@ fn _block_bytes(file_offset: Int64, meta_len: Int32, body_len: Int64) -> List[UI
     return result^
 
 
-fn _block_offset_from_bytes(data: List[UInt8]) raises -> Int64:
+def _block_offset_from_bytes(data: List[UInt8]) raises -> Int64:
     return read_i64_le(data, 0)
 
 
-fn _block_meta_len_from_bytes(data: List[UInt8]) raises -> Int32:
+def _block_meta_len_from_bytes(data: List[UInt8]) raises -> Int32:
     return read_i32_le(data, 8)
 
 
-fn _block_body_len_from_bytes(data: List[UInt8]) raises -> Int64:
+def _block_body_len_from_bytes(data: List[UInt8]) raises -> Int64:
     return read_i64_le(data, 16)
 
 
-fn encode_arrow_file(
+def encode_arrow_file(
     schema: ArrowSchema,
     batches: List[RecordBatch],
 ) raises -> List[UInt8]:
@@ -1185,7 +1209,7 @@ fn encode_arrow_file(
     return out^
 
 
-fn decode_arrow_file(
+def decode_arrow_file(
     buf: List[UInt8],
 ) raises -> Tuple[ArrowSchema, List[RecordBatch]]:
     """

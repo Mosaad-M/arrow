@@ -11,6 +11,8 @@ env = { FLATBUFFERS = "../flatbuffers" }
 install = "mojo-pkg install"
 test-arrow = "bash -c 'mojo run $(cat .mojo_flags 2>/dev/null || echo \"-I $FLATBUFFERS\") test_arrow.mojo'"
 test-csv-arrow = "bash -c 'mojo run $(cat .mojo_flags 2>/dev/null || echo \"-I $FLATBUFFERS\") test_csv_arrow.mojo'"
+test-dtypes = "bash -c 'mojo run $(cat .mojo_flags 2>/dev/null || echo \"-I $FLATBUFFERS\") test_dtypes.mojo'"
+test-arrays = "bash -c 'mojo run $(cat .mojo_flags 2>/dev/null || echo \"-I $FLATBUFFERS\") test_arrays.mojo'"
 csv-to-feather = "bash -c 'mojo run $(cat .mojo_flags 2>/dev/null || echo \"-I $FLATBUFFERS\") csv_arrow.mojo'"
 bench-arrow = "bash -c 'mojo run $(cat .mojo_flags 2>/dev/null || echo \"-I $FLATBUFFERS\") bench_arrow.mojo'"
 format = "mblack arrow.mojo test_arrow.mojo csv_arrow.mojo"
