@@ -1,4 +1,4 @@
-from pathlib import Path
+from std.pathlib import Path
 from arrow import (
     ArrowType, ArrowField, ArrowSchema, ArrowArray, RecordBatch,
     encode_arrow_file, decode_arrow_file,
@@ -15,7 +15,7 @@ from flatbuffers import (
 # ============================================================================
 
 
-fn read_csv(
+def read_csv(
     path: String,
 ) raises -> Tuple[List[String], List[List[String]]]:
     """
@@ -29,7 +29,7 @@ fn read_csv(
     # Collect non-empty lines (split returns StringSlice, convert to String)
     var lines = List[String]()
     for i in range(len(raw_lines)):
-        if len(raw_lines[i]) > 0:
+        if raw_lines[i].byte_length() > 0:
             lines.append(String(raw_lines[i]))
 
     if len(lines) == 0:
@@ -65,7 +65,7 @@ fn read_csv(
 # ============================================================================
 
 
-fn infer_type(values: List[String]) -> ArrowType:
+def infer_type(values: List[String]) -> ArrowType:
     """
     Infer Arrow type for a column of string values.
     Empty strings are treated as nulls and skipped during inference.
@@ -76,7 +76,7 @@ fn infer_type(values: List[String]) -> ArrowType:
     var all_float = True
 
     for i in range(len(values)):
-        if len(values[i]) == 0:
+        if values[i].byte_length() == 0:
             continue  # null — skip for type inference
         has_non_empty = True
 
@@ -106,7 +106,7 @@ fn infer_type(values: List[String]) -> ArrowType:
         return ArrowType.utf8()
 
 
-fn infer_schema(
+def infer_schema(
     names: List[String],
     rows: List[List[String]],
 ) raises -> ArrowSchema:
@@ -124,7 +124,7 @@ fn infer_schema(
         for row in range(len(rows)):
             var v = rows[row][col]
             col_values.append(v)
-            if len(v) == 0:
+            if v.byte_length() == 0:
                 nullable = True
 
         var arrow_type = infer_type(col_values)
@@ -138,7 +138,7 @@ fn infer_schema(
 # ============================================================================
 
 
-fn _build_validity(values: List[String], null_count: Int) raises -> List[UInt8]:
+def _build_validity(values: List[String], null_count: Int) raises -> List[UInt8]:
     """Build a packed validity bitmap for a column with some null values."""
     var n = len(values)
     var n_bytes = (n + 7) // 8
@@ -146,13 +146,13 @@ fn _build_validity(values: List[String], null_count: Int) raises -> List[UInt8]:
     for _ in range(n_bytes):
         validity.append(UInt8(0))
     for i in range(n):
-        if len(values[i]) > 0:
+        if values[i].byte_length() > 0:
             # Bit i in LSB-first order
             validity[i // 8] |= UInt8(1 << (i % 8))
     return validity^
 
 
-fn build_array(
+def build_array(
     type: ArrowType,
     nullable: Bool,
     values: List[String],
@@ -166,7 +166,7 @@ fn build_array(
     # Count nulls
     var null_count = 0
     for i in range(length):
-        if len(values[i]) == 0:
+        if values[i].byte_length() == 0:
             null_count += 1
 
     # Build validity bitmap (only when there are nulls)
@@ -185,7 +185,7 @@ fn build_array(
             value_bytes.append(UInt8(0))
         for i in range(length):
             var int_val = Int64(0)
-            if len(values[i]) > 0:
+            if values[i].byte_length() > 0:
                 int_val = Int64(Int(values[i]))
             write_i64_le(value_bytes, i * 8, int_val)
         return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
@@ -198,7 +198,7 @@ fn build_array(
             value_bytes.append(UInt8(0))
         for i in range(length):
             var int_val = Int(0)
-            if len(values[i]) > 0:
+            if values[i].byte_length() > 0:
                 int_val = Int(values[i])
             # Write LE bytes for the int value
             for b in range(byte_width):
@@ -212,7 +212,7 @@ fn build_array(
             value_bytes.append(UInt8(0))
         for i in range(length):
             var f_val = Float64(0.0)
-            if len(values[i]) > 0:
+            if values[i].byte_length() > 0:
                 f_val = Float64(values[i])
             write_f64_le(value_bytes, i * 8, f_val)
         return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
@@ -225,7 +225,7 @@ fn build_array(
             value_bytes.append(UInt8(0))
         for i in range(length):
             var f_val = Float64(0.0)
-            if len(values[i]) > 0:
+            if values[i].byte_length() > 0:
                 f_val = Float64(values[i])
             write_f64_le(value_bytes, i * 8, f_val)
         return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
@@ -240,7 +240,7 @@ fn build_array(
     var value_bytes = List[UInt8]()
     var cur_byte = 0
     for i in range(length):
-        if len(values[i]) > 0:
+        if values[i].byte_length() > 0:
             var sb = values[i].as_bytes()
             for j in range(len(sb)):
                 value_bytes.append(sb[j])
@@ -255,7 +255,7 @@ fn build_array(
 # ============================================================================
 
 
-fn csv_to_feather(csv_path: String, feather_path: String) raises:
+def csv_to_feather(csv_path: String, feather_path: String) raises:
     """
     Full pipeline: read CSV → infer schema → encode as Arrow IPC file → write .feather.
     """
@@ -290,7 +290,7 @@ fn csv_to_feather(csv_path: String, feather_path: String) raises:
 # ============================================================================
 
 
-fn _array_value_to_string(col: ArrowArray, row: Int) raises -> String:
+def _array_value_to_string(col: ArrowArray, row: Int) raises -> String:
     """Return the string representation of element `row` in an ArrowArray."""
     # Check validity (null check)
     if col.null_count > 0 and len(col.validity) > 0:
@@ -336,7 +336,7 @@ fn _array_value_to_string(col: ArrowArray, row: Int) raises -> String:
     return String("")
 
 
-fn feather_to_csv(feather_path: String, csv_path: String) raises:
+def feather_to_csv(feather_path: String, csv_path: String) raises:
     """
     Inverse pipeline: read .feather → decode Arrow IPC file → write CSV.
     All batches are concatenated row-by-row.
