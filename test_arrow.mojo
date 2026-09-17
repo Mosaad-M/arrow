@@ -36,36 +36,36 @@ from flatbuffers import (
 # ============================================================================
 
 
-fn assert_true(cond: Bool, msg: String = "") raises:
+def assert_true(cond: Bool, msg: String = "") raises:
     if not cond:
-        raise Error(msg if len(msg) > 0 else "expected True")
+        raise Error(msg if msg.byte_length() > 0 else "expected True")
 
 
-fn assert_eq_int(actual: Int, expected: Int, msg: String = "") raises:
+def assert_eq_int(actual: Int, expected: Int, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        raise Error(msg + ": " + m if len(msg) > 0 else m)
+        raise Error(msg + ": " + m if msg.byte_length() > 0 else m)
 
 
-fn assert_eq_u8(actual: UInt8, expected: UInt8, msg: String = "") raises:
+def assert_eq_u8(actual: UInt8, expected: UInt8, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        raise Error(msg + ": " + m if len(msg) > 0 else m)
+        raise Error(msg + ": " + m if msg.byte_length() > 0 else m)
 
 
-fn assert_eq_u32(actual: UInt32, expected: UInt32, msg: String = "") raises:
+def assert_eq_u32(actual: UInt32, expected: UInt32, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        raise Error(msg + ": " + m if len(msg) > 0 else m)
+        raise Error(msg + ": " + m if msg.byte_length() > 0 else m)
 
 
-fn assert_eq_i32(actual: Int32, expected: Int32, msg: String = "") raises:
+def assert_eq_i32(actual: Int32, expected: Int32, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        raise Error(msg + ": " + m if len(msg) > 0 else m)
+        raise Error(msg + ": " + m if msg.byte_length() > 0 else m)
 
 
-fn assert_f64_near(a: Float64, b: Float64, eps: Float64 = 1e-9) raises:
+def assert_f64_near(a: Float64, b: Float64, eps: Float64 = 1e-9) raises:
     var diff = a - b
     if diff < 0.0:
         diff = -diff
@@ -78,14 +78,14 @@ fn assert_f64_near(a: Float64, b: Float64, eps: Float64 = 1e-9) raises:
 # ============================================================================
 
 
-fn test_ipc_pad8_already_aligned() raises:
+def test_ipc_pad8_already_aligned() raises:
     assert_eq_int(ipc_pad8(0), 0, "pad8(0)")
     assert_eq_int(ipc_pad8(8), 8, "pad8(8)")
     assert_eq_int(ipc_pad8(16), 16, "pad8(16)")
     assert_eq_int(ipc_pad8(256), 256, "pad8(256)")
 
 
-fn test_ipc_pad8_needs_padding() raises:
+def test_ipc_pad8_needs_padding() raises:
     assert_eq_int(ipc_pad8(1), 8, "pad8(1)")
     assert_eq_int(ipc_pad8(7), 8, "pad8(7)")
     assert_eq_int(ipc_pad8(9), 16, "pad8(9)")
@@ -93,7 +93,7 @@ fn test_ipc_pad8_needs_padding() raises:
     assert_eq_int(ipc_pad8(17), 24, "pad8(17)")
 
 
-fn test_encode_ipc_message_continuation() raises:
+def test_encode_ipc_message_continuation() raises:
     var meta = List[UInt8]()
     meta.append(UInt8(1))
     meta.append(UInt8(2))
@@ -105,7 +105,7 @@ fn test_encode_ipc_message_continuation() raises:
     assert_eq_u8(msg[3], UInt8(0xFF), "continuation byte 3")
 
 
-fn test_encode_ipc_message_metadata_length() raises:
+def test_encode_ipc_message_metadata_length() raises:
     var meta = List[UInt8]()
     for _ in range(13):
         meta.append(UInt8(0xAB))
@@ -115,7 +115,7 @@ fn test_encode_ipc_message_metadata_length() raises:
     assert_eq_i32(mlen, Int32(13), "metadata_length field")
 
 
-fn test_encode_ipc_message_metadata_content() raises:
+def test_encode_ipc_message_metadata_content() raises:
     var meta = List[UInt8]()
     meta.append(UInt8(0x11))
     meta.append(UInt8(0x22))
@@ -127,7 +127,7 @@ fn test_encode_ipc_message_metadata_content() raises:
     assert_eq_u8(msg[10], UInt8(0x33), "meta[2]")
 
 
-fn test_encode_ipc_message_body_aligned() raises:
+def test_encode_ipc_message_body_aligned() raises:
     # 4 (continuation) + 4 (length) + 5 (metadata) = 13 bytes → pad to 16
     # body follows at byte 16
     var meta = List[UInt8]()
@@ -145,20 +145,20 @@ fn test_encode_ipc_message_body_aligned() raises:
     assert_eq_u8(msg[padded_header + 1], UInt8(2), "body[1]")
     assert_eq_u8(msg[padded_header + 2], UInt8(3), "body[2]")
     # total length is 8-byte aligned
-    assert_eq_int(len(msg) % 8, 0, "total length % 8")
+    assert_eq_int(msg.byte_length() % 8, 0, "total length % 8")
 
 
-fn test_encode_ipc_message_empty_body() raises:
+def test_encode_ipc_message_empty_body() raises:
     var meta = List[UInt8]()
     meta.append(UInt8(0x55))
     var body = List[UInt8]()
     var msg = encode_ipc_message(meta, body)
     # Must still be 8-byte aligned and have the continuation marker
     assert_eq_u8(msg[0], UInt8(0xFF), "continuation")
-    assert_eq_int(len(msg) % 8, 0, "empty body: total % 8")
+    assert_eq_int(msg.byte_length() % 8, 0, "empty body: total % 8")
 
 
-fn test_encode_eos_exact_bytes() raises:
+def test_encode_eos_exact_bytes() raises:
     var eos = encode_eos()
     assert_eq_int(len(eos), 8, "eos length")
     assert_eq_u8(eos[0], UInt8(0xFF), "eos[0]")
@@ -176,7 +176,7 @@ fn test_encode_eos_exact_bytes() raises:
 # ============================================================================
 
 
-fn _roundtrip_type(t: ArrowType) raises -> ArrowType:
+def _roundtrip_type(t: ArrowType) raises -> ArrowType:
     """Encode t into a FlatBuffers Message with the type union, then decode."""
     var b = FlatBufferBuilder(128)
     var disc_and_off = encode_arrow_type(b, t)
@@ -195,14 +195,14 @@ fn _roundtrip_type(t: ArrowType) raises -> ArrowType:
     return decode_arrow_type(r, d, vtp)
 
 
-fn test_arrow_type_null_tag() raises:
+def test_arrow_type_null_tag() raises:
     var t = ArrowType.null()
     assert_eq_u8(t.tag, TYPE_NULL(), "null tag")
     var rt = _roundtrip_type(t)
     assert_eq_u8(rt.tag, TYPE_NULL(), "null roundtrip tag")
 
 
-fn test_arrow_type_int32_signed() raises:
+def test_arrow_type_int32_signed() raises:
     var t = ArrowType.int_(Int32(32), True)
     var rt = _roundtrip_type(t)
     assert_eq_u8(rt.tag, TYPE_INT(), "int32 tag")
@@ -210,7 +210,7 @@ fn test_arrow_type_int32_signed() raises:
     assert_true(rt.int_meta.is_signed, "is_signed")
 
 
-fn test_arrow_type_int64_unsigned() raises:
+def test_arrow_type_int64_unsigned() raises:
     var t = ArrowType.int_(Int32(64), False)
     var rt = _roundtrip_type(t)
     assert_eq_u8(rt.tag, TYPE_INT(), "int64 tag")
@@ -218,27 +218,27 @@ fn test_arrow_type_int64_unsigned() raises:
     assert_true(not rt.int_meta.is_signed, "not is_signed")
 
 
-fn test_arrow_type_float_single() raises:
+def test_arrow_type_float_single() raises:
     var t = ArrowType.float_(UInt16(1))
     var rt = _roundtrip_type(t)
     assert_eq_u8(rt.tag, TYPE_FLOAT(), "float single tag")
     assert_eq_u8(UInt8(rt.float_meta.precision), UInt8(1), "precision=1")
 
 
-fn test_arrow_type_float_double() raises:
+def test_arrow_type_float_double() raises:
     var t = ArrowType.float_(UInt16(2))
     var rt = _roundtrip_type(t)
     assert_eq_u8(rt.tag, TYPE_FLOAT(), "float double tag")
     assert_eq_u8(UInt8(rt.float_meta.precision), UInt8(2), "precision=2")
 
 
-fn test_arrow_type_utf8_tag() raises:
+def test_arrow_type_utf8_tag() raises:
     var t = ArrowType.utf8()
     var rt = _roundtrip_type(t)
     assert_eq_u8(rt.tag, TYPE_UTF8(), "utf8 tag")
 
 
-fn test_arrow_type_bool_tag() raises:
+def test_arrow_type_bool_tag() raises:
     var t = ArrowType.bool_()
     var rt = _roundtrip_type(t)
     assert_eq_u8(rt.tag, TYPE_BOOL(), "bool tag")
@@ -249,7 +249,7 @@ fn test_arrow_type_bool_tag() raises:
 # ============================================================================
 
 
-fn test_adversarial_ipc_pad8_overflow() raises:
+def test_adversarial_ipc_pad8_overflow() raises:
     """ipc_pad8 must raise on input that would overflow size + 7."""
     var raised = False
     try:
@@ -259,7 +259,7 @@ fn test_adversarial_ipc_pad8_overflow() raises:
     assert_true(raised, "ipc_pad8 on huge value must raise")
 
 
-fn test_adversarial_encode_huge_metadata() raises:
+def test_adversarial_encode_huge_metadata() raises:
     """encode_ipc_message must raise when metadata exceeds 1 GB cap."""
     # Build a list header that claims huge length without actually allocating it
     # We test the guard, not actual allocation — use a small list but mock via
@@ -274,7 +274,7 @@ fn test_adversarial_encode_huge_metadata() raises:
     assert_true(len(result) > 0, "small metadata should succeed")
 
 
-fn test_adversarial_decode_negative_pos() raises:
+def test_adversarial_decode_negative_pos() raises:
     """decode_ipc_message must raise on negative pos."""
     var buf = encode_eos()
     var raised = False
@@ -285,7 +285,7 @@ fn test_adversarial_decode_negative_pos() raises:
     assert_true(raised, "negative pos must raise")
 
 
-fn test_adversarial_decode_huge_meta_len() raises:
+def test_adversarial_decode_huge_meta_len() raises:
     """meta_len = Int32.MAX in a real buffer must raise, not read OOB."""
     # Build a valid 8-byte IPC header but inject meta_len = 0x7FFFFFFF
     var buf = List[UInt8](capacity=8)
@@ -301,7 +301,7 @@ fn test_adversarial_decode_huge_meta_len() raises:
     assert_true(raised, "huge meta_len must raise, not OOB read")
 
 
-fn test_adversarial_decode_truncated_buf() raises:
+def test_adversarial_decode_truncated_buf() raises:
     """Continuation present but metadata cut short must raise."""
     var meta = List[UInt8]()
     for i in range(20):
@@ -319,7 +319,7 @@ fn test_adversarial_decode_truncated_buf() raises:
     assert_true(raised, "truncated metadata must raise")
 
 
-fn test_adversarial_encode_arrow_type_bad_tag() raises:
+def test_adversarial_encode_arrow_type_bad_tag() raises:
     """encode_arrow_type must raise on unknown tag (tag=0, tag=99)."""
     var b0 = FlatBufferBuilder(64)
     var t0 = ArrowType(UInt8(0), Int32(0), False, UInt16(0))
@@ -340,7 +340,7 @@ fn test_adversarial_encode_arrow_type_bad_tag() raises:
     assert_true(raised99, "tag=99 must raise")
 
 
-fn test_arrow_type_unknown_discriminant_raises() raises:
+def test_arrow_type_unknown_discriminant_raises() raises:
     var b = FlatBufferBuilder(64)
     b.start_table()
     var toff = b.end_table()
@@ -360,7 +360,7 @@ fn test_arrow_type_unknown_discriminant_raises() raises:
 # ============================================================================
 
 
-fn test_schema_empty_fields() raises:
+def test_schema_empty_fields() raises:
     """Schema with zero fields encodes and decodes cleanly."""
     var fields = List[ArrowField]()
     var schema = ArrowSchema(fields, Int16(0))
@@ -373,7 +373,7 @@ fn test_schema_empty_fields() raises:
     assert_true(decoded.endianness == Int16(0), "expected little-endian")
 
 
-fn test_schema_single_field_int32() raises:
+def test_schema_single_field_int32() raises:
     """Single Int32 signed non-nullable field roundtrips."""
     var fields = List[ArrowField]()
     fields.append(ArrowField("age", ArrowType.int_(32, True), False))
@@ -391,7 +391,7 @@ fn test_schema_single_field_int32() raises:
     assert_true(decoded.fields[0].nullable == False, "expected non-nullable")
 
 
-fn test_schema_nullable_field() raises:
+def test_schema_nullable_field() raises:
     """nullable=True roundtrips correctly."""
     var fields = List[ArrowField]()
     fields.append(ArrowField("score", ArrowType.float_(2), True))
@@ -404,7 +404,7 @@ fn test_schema_nullable_field() raises:
     assert_true(decoded.fields[0].nullable == True, "expected nullable=True")
 
 
-fn test_schema_field_name_roundtrip() raises:
+def test_schema_field_name_roundtrip() raises:
     """Field name string survives encode→decode exactly."""
     var fields = List[ArrowField]()
     fields.append(ArrowField("hello_world_123", ArrowType.utf8(), False))
@@ -417,7 +417,7 @@ fn test_schema_field_name_roundtrip() raises:
     assert_true(decoded.fields[0].name == "hello_world_123", "name mismatch")
 
 
-fn test_schema_multiple_fields() raises:
+def test_schema_multiple_fields() raises:
     """Three fields of different types roundtrip in order."""
     var fields = List[ArrowField]()
     fields.append(ArrowField("id", ArrowType.int_(64, False), False))
@@ -441,7 +441,7 @@ fn test_schema_multiple_fields() raises:
     assert_true(decoded.fields[2].type.tag == TYPE_BOOL(), "field 2 type")
 
 
-fn test_schema_all_types() raises:
+def test_schema_all_types() raises:
     """One field per Arrow type (6 fields) roundtrips correctly."""
     var fields = List[ArrowField]()
     fields.append(ArrowField("f_null", ArrowType.null(), False))
@@ -467,7 +467,7 @@ fn test_schema_all_types() raises:
     assert_true(decoded.fields[5].type.tag == TYPE_BOOL(), "bool type")
 
 
-fn test_decode_schema_wrong_header_type() raises:
+def test_decode_schema_wrong_header_type() raises:
     """Decoding a message with header_type != 1 raises."""
     # Encode a valid schema message then corrupt the header_type byte
     var fields = List[ArrowField]()
@@ -494,7 +494,7 @@ fn test_decode_schema_wrong_header_type() raises:
     assert_true(raised, "wrong header_type must raise")
 
 
-fn test_schema_endianness_roundtrip() raises:
+def test_schema_endianness_roundtrip() raises:
     """endianness=1 (big-endian) roundtrips correctly."""
     var fields = List[ArrowField]()
     fields.append(ArrowField("x", ArrowType.int_(32, True), False))
@@ -512,7 +512,7 @@ fn test_schema_endianness_roundtrip() raises:
 # ============================================================================
 
 
-fn test_rb_empty() raises:
+def test_rb_empty() raises:
     """0 rows, 0 nodes, 0 buffers, empty body encodes/decodes cleanly."""
     var nodes = List[FieldNode]()
     var buffers = List[BufferDesc]()
@@ -526,7 +526,7 @@ fn test_rb_empty() raises:
     assert_true(len(result[3]) == 0, "body empty")
 
 
-fn test_rb_row_count() raises:
+def test_rb_row_count() raises:
     """length field roundtrips exactly."""
     var buf = encode_record_batch_message(
         Int64(1000), List[FieldNode](), List[BufferDesc](), List[UInt8]()
@@ -536,7 +536,7 @@ fn test_rb_row_count() raises:
     assert_true(result[0] == Int64(1000), "length=1000")
 
 
-fn test_rb_single_node() raises:
+def test_rb_single_node() raises:
     """Single FieldNode (length=5, null_count=2) roundtrips."""
     var nodes = List[FieldNode]()
     nodes.append(FieldNode(Int64(5), Int64(2)))
@@ -551,7 +551,7 @@ fn test_rb_single_node() raises:
     assert_true(decoded_nodes[0].null_count == Int64(2), "node.null_count=2")
 
 
-fn test_rb_multi_node() raises:
+def test_rb_multi_node() raises:
     """3 FieldNodes in order with all values preserved."""
     var nodes = List[FieldNode]()
     nodes.append(FieldNode(Int64(10), Int64(0)))
@@ -569,7 +569,7 @@ fn test_rb_multi_node() raises:
     assert_true(n[2].length == Int64(30) and n[2].null_count == Int64(7), "node2")
 
 
-fn test_rb_single_buffer() raises:
+def test_rb_single_buffer() raises:
     """Single BufferDesc (offset=0, length=20) roundtrips."""
     var buffers = List[BufferDesc]()
     buffers.append(BufferDesc(Int64(0), Int64(20)))
@@ -584,7 +584,7 @@ fn test_rb_single_buffer() raises:
     assert_true(bd[0].length == Int64(20), "length=20")
 
 
-fn test_rb_multi_buffer() raises:
+def test_rb_multi_buffer() raises:
     """6 BufferDescs with varying offsets/lengths all roundtrip."""
     var buffers = List[BufferDesc]()
     buffers.append(BufferDesc(Int64(0),   Int64(0)))
@@ -606,7 +606,7 @@ fn test_rb_multi_buffer() raises:
     assert_true(bd[5].offset == Int64(120) and bd[5].length == Int64(16),  "bd5")
 
 
-fn test_rb_body_passthrough() raises:
+def test_rb_body_passthrough() raises:
     """Body bytes are preserved exactly through encode/decode."""
     var body = List[UInt8]()
     for i in range(16):
@@ -625,7 +625,7 @@ fn test_rb_body_passthrough() raises:
         )
 
 
-fn test_decode_rb_wrong_header_type() raises:
+def test_decode_rb_wrong_header_type() raises:
     """Decoding a Schema message (header_type=1) as RecordBatch raises."""
     var fields = List[ArrowField]()
     var schema = ArrowSchema(fields, Int16(0))
@@ -638,7 +638,7 @@ fn test_decode_rb_wrong_header_type() raises:
     assert_true(raised, "expected raise for wrong header_type")
 
 
-fn test_decode_rb_negative_pos() raises:
+def test_decode_rb_negative_pos() raises:
     """Negative pos raises immediately."""
     var buf = List[UInt8]()
     for _ in range(16):
@@ -656,7 +656,7 @@ fn test_decode_rb_negative_pos() raises:
 # ============================================================================
 
 
-fn _write_i32_le_into(mut buf: List[UInt8], val: Int32):
+def _write_i32_le_into(mut buf: List[UInt8], val: Int32):
     """Append 4 LE bytes for val to buf."""
     var v = Int64(val)
     buf.append(UInt8(v & Int64(0xFF)))
@@ -665,7 +665,7 @@ fn _write_i32_le_into(mut buf: List[UInt8], val: Int32):
     buf.append(UInt8((v >> 24) & Int64(0xFF)))
 
 
-fn _write_i64_le_into(mut buf: List[UInt8], val: Int64):
+def _write_i64_le_into(mut buf: List[UInt8], val: Int64):
     """Append 8 LE bytes for val to buf."""
     buf.append(UInt8(val & Int64(0xFF)))
     buf.append(UInt8((val >> 8) & Int64(0xFF)))
@@ -677,7 +677,7 @@ fn _write_i64_le_into(mut buf: List[UInt8], val: Int64):
     buf.append(UInt8((val >> 56) & Int64(0xFF)))
 
 
-fn _read_i32_from(buf: List[UInt8], pos: Int) -> Int32:
+def _read_i32_from(buf: List[UInt8], pos: Int) -> Int32:
     """Read 4 LE bytes as Int32."""
     var v = (
         Int64(buf[pos])
@@ -690,7 +690,7 @@ fn _read_i32_from(buf: List[UInt8], pos: Int) -> Int32:
 
 
 
-fn test_encode_array_int32_no_nulls() raises:
+def test_encode_array_int32_no_nulls() raises:
     """Int32 array with no nulls: validity buffer is absent (length=0), values correct."""
     var values = List[UInt8]()
     _write_i32_le_into(values, Int32(10))
@@ -720,7 +720,7 @@ fn test_encode_array_int32_no_nulls() raises:
     assert_true(_read_i32_from(decoded.values, 8) == Int32(30), "val[2]=30")
 
 
-fn test_encode_array_int32_with_nulls() raises:
+def test_encode_array_int32_with_nulls() raises:
     """Int32 with nulls: validity bitmap set correctly."""
     # 4 elements: valid=10, null, valid=30, null
     # Validity bits LSB-first: [1, 0, 1, 0] → byte = 0b00000101 = 5
@@ -750,7 +750,7 @@ fn test_encode_array_int32_with_nulls() raises:
     assert_true(decoded.validity[0] == UInt8(0b00000101), "validity byte preserved")
 
 
-fn test_encode_array_int64() raises:
+def test_encode_array_int64() raises:
     """Int64 array roundtrips with correct byte stride (8 bytes/element)."""
     var values = List[UInt8]()
     _write_i64_le_into(values, Int64(1000000000000))
@@ -770,7 +770,7 @@ fn test_encode_array_int64() raises:
     assert_true(len(decoded.values) == 16, "decoded values 16 bytes")
 
 
-fn test_encode_array_float64() raises:
+def test_encode_array_float64() raises:
     """Float64 array: values buffer is 8 bytes per element."""
     var values = List[UInt8]()
     # Use write_f64_le to get the correct IEEE 754 LE byte layout for 3.14
@@ -792,7 +792,7 @@ fn test_encode_array_float64() raises:
     assert_true(decoded_val == Float64(3.14), "float64 value preserved: " + String(decoded_val))
 
 
-fn test_encode_array_bool() raises:
+def test_encode_array_bool() raises:
     """Bool array: values are packed bits LSB-first."""
     # 4 elements: [true, false, true, false] → 0b00000101 = 5
     var values = List[UInt8]()
@@ -811,7 +811,7 @@ fn test_encode_array_bool() raises:
     assert_true(decoded.values[0] == UInt8(0b00000101), "packed bool byte preserved")
 
 
-fn test_encode_array_utf8() raises:
+def test_encode_array_utf8() raises:
     """Utf8 array: offsets + value bytes correct."""
     # ["hello", "world"]
     # offsets: [0, 5, 10]
@@ -848,7 +848,7 @@ fn test_encode_array_utf8() raises:
     assert_true(off1 == Int32(5), "offset[1]=5")
 
 
-fn test_encode_array_null() raises:
+def test_encode_array_null() raises:
     """Null array: 0 buffers, null_count == length."""
     var arr = ArrowArray(ArrowType.null(), 5, 5, List[UInt8](), List[UInt8](), List[UInt8]())
 
@@ -863,7 +863,7 @@ fn test_encode_array_null() raises:
     assert_true(node.null_count == Int64(5), "null_count==length for Null array")
 
 
-fn test_encode_array_null_count() raises:
+def test_encode_array_null_count() raises:
     """FieldNode.null_count matches ArrowArray.null_count."""
     var validity = List[UInt8]()
     validity.append(UInt8(0b00000001))  # only element 0 is valid
@@ -878,7 +878,7 @@ fn test_encode_array_null_count() raises:
     assert_true(node.null_count == Int64(2), "node.null_count == arr.null_count")
 
 
-fn test_record_batch_encode_decode() raises:
+def test_record_batch_encode_decode() raises:
     """Full roundtrip: 2 columns (Int32, Utf8) encode → decode preserves structure."""
     # Column 0: Int32, 2 rows, no nulls: [1, 2]
     var v0 = List[UInt8]()
@@ -920,7 +920,7 @@ fn test_record_batch_encode_decode() raises:
     assert_true(_read_i32_from(decoded_arrays[0].values, 4) == Int32(2), "col0[1]=2")
 
 
-fn test_record_batch_null_values_preserved() raises:
+def test_record_batch_null_values_preserved() raises:
     """Null positions survive encode → decode round-trip."""
     # Int32 column: 3 rows, row 1 is null. Validity byte = 0b00000101
     var validity = List[UInt8]()
@@ -954,7 +954,7 @@ fn test_record_batch_null_values_preserved() raises:
 # ============================================================================
 
 # Magic bytes: ARROW1\0\0
-fn _arrow_magic() -> List[UInt8]:
+def _arrow_magic() -> List[UInt8]:
     var m = List[UInt8]()
     m.append(UInt8(0x41))
     m.append(UInt8(0x52))
@@ -967,13 +967,13 @@ fn _arrow_magic() -> List[UInt8]:
     return m^
 
 
-fn _make_simple_schema() -> ArrowSchema:
+def _make_simple_schema() -> ArrowSchema:
     var fields = List[ArrowField]()
     fields.append(ArrowField("x", ArrowType.int_(32, True), False))
     return ArrowSchema(fields, Int16(0))
 
 
-fn test_arrow_file_magic_prefix() raises:
+def test_arrow_file_magic_prefix() raises:
     """First 8 bytes of the encoded file are ARROW1\\0\\0."""
     var schema = _make_simple_schema()
     var batches = List[RecordBatch]()
@@ -985,7 +985,7 @@ fn test_arrow_file_magic_prefix() raises:
         assert_eq_u8(file_bytes[i], magic[i], "magic prefix byte " + String(i))
 
 
-fn test_arrow_file_magic_suffix() raises:
+def test_arrow_file_magic_suffix() raises:
     """Last 8 bytes of the encoded file are ARROW1\\0\\0."""
     var schema = _make_simple_schema()
     var batches = List[RecordBatch]()
@@ -998,7 +998,7 @@ fn test_arrow_file_magic_suffix() raises:
         assert_eq_u8(file_bytes[n - 8 + i], magic[i], "magic suffix byte " + String(i))
 
 
-fn test_arrow_file_footer_size() raises:
+def test_arrow_file_footer_size() raises:
     """Int32 at offset len-12 matches the actual footer byte count."""
     var schema = _make_simple_schema()
     var batches = List[RecordBatch]()
@@ -1013,7 +1013,7 @@ fn test_arrow_file_footer_size() raises:
     assert_true(n - 12 - Int(footer_size) >= 0, "footer fits in file")
 
 
-fn test_arrow_file_schema_roundtrip() raises:
+def test_arrow_file_schema_roundtrip() raises:
     """Schema fields and types survive encode→decode."""
     var fields = List[ArrowField]()
     fields.append(ArrowField("id", ArrowType.int_(64, True), False))
@@ -1032,7 +1032,7 @@ fn test_arrow_file_schema_roundtrip() raises:
     assert_eq_u8(dec_schema.fields[1].type.tag, TYPE_FLOAT(), "field[1] is Float")
 
 
-fn test_arrow_file_zero_batches() raises:
+def test_arrow_file_zero_batches() raises:
     """Schema-only file decodes to 0 record batches."""
     var schema = _make_simple_schema()
     var batches = List[RecordBatch]()
@@ -1044,7 +1044,7 @@ fn test_arrow_file_zero_batches() raises:
     assert_eq_int(len(dec_batches), 0, "0 batches decoded")
 
 
-fn test_arrow_file_single_batch() raises:
+def test_arrow_file_single_batch() raises:
     """One RecordBatch roundtrips with correct column values."""
     var schema = _make_simple_schema()
 
@@ -1072,7 +1072,7 @@ fn test_arrow_file_single_batch() raises:
     assert_true(_read_i32_from(c0.values, 4) == Int32(20), "col[1]=20")
 
 
-fn test_arrow_file_multi_batch() raises:
+def test_arrow_file_multi_batch() raises:
     """Two RecordBatches: order and values preserved."""
     var schema = _make_simple_schema()
 
@@ -1110,7 +1110,7 @@ fn test_arrow_file_multi_batch() raises:
     assert_true(_read_i32_from(c10.values, 4) == Int32(3), "batch[1] col[1]=3")
 
 
-fn test_adversarial_decode_array_negative_offset() raises:
+def test_adversarial_decode_array_negative_offset() raises:
     """decode_array raises on negative buffer offset (S-P5-1)."""
     var node = FieldNode(Int64(1), Int64(0))
     var descs = List[BufferDesc]()
@@ -1127,7 +1127,7 @@ fn test_adversarial_decode_array_negative_offset() raises:
     assert_true(raised, "expected error for negative buffer offset")
 
 
-fn test_adversarial_decode_array_negative_length() raises:
+def test_adversarial_decode_array_negative_length() raises:
     """decode_array raises on negative buffer length (S-P5-1)."""
     var node = FieldNode(Int64(1), Int64(0))
     var descs = List[BufferDesc]()
@@ -1144,7 +1144,7 @@ fn test_adversarial_decode_array_negative_length() raises:
     assert_true(raised, "expected error for negative buffer length")
 
 
-fn test_decode_arrow_file_wrong_magic() raises:
+def test_decode_arrow_file_wrong_magic() raises:
     """Wrong magic prefix raises an error."""
     var bad = List[UInt8]()
     for _ in range(8):
@@ -1162,7 +1162,9 @@ fn test_decode_arrow_file_wrong_magic() raises:
 # ============================================================================
 
 
-fn run_test(name: String, mut passed: Int, mut failed: Int, test_fn: fn () raises -> None):
+def run_test[test_fn: def() thin raises -> None](
+    name: String, mut passed: Int, mut failed: Int
+):
     try:
         test_fn()
         print("  PASS: " + name)
@@ -1172,86 +1174,86 @@ fn run_test(name: String, mut passed: Int, mut failed: Int, test_fn: fn () raise
         failed += 1
 
 
-fn main() raises:
+def main() raises:
     print("=== arrow tests ===")
 
     var passed = 0
     var failed = 0
 
     # Phase 1 — IPC message framing
-    run_test("test_ipc_pad8_already_aligned", passed, failed, test_ipc_pad8_already_aligned)
-    run_test("test_ipc_pad8_needs_padding", passed, failed, test_ipc_pad8_needs_padding)
-    run_test("test_encode_ipc_message_continuation", passed, failed, test_encode_ipc_message_continuation)
-    run_test("test_encode_ipc_message_metadata_length", passed, failed, test_encode_ipc_message_metadata_length)
-    run_test("test_encode_ipc_message_metadata_content", passed, failed, test_encode_ipc_message_metadata_content)
-    run_test("test_encode_ipc_message_body_aligned", passed, failed, test_encode_ipc_message_body_aligned)
-    run_test("test_encode_ipc_message_empty_body", passed, failed, test_encode_ipc_message_empty_body)
-    run_test("test_encode_eos_exact_bytes", passed, failed, test_encode_eos_exact_bytes)
+    run_test[test_ipc_pad8_already_aligned]("test_ipc_pad8_already_aligned", passed, failed)
+    run_test[test_ipc_pad8_needs_padding]("test_ipc_pad8_needs_padding", passed, failed)
+    run_test[test_encode_ipc_message_continuation]("test_encode_ipc_message_continuation", passed, failed)
+    run_test[test_encode_ipc_message_metadata_length]("test_encode_ipc_message_metadata_length", passed, failed)
+    run_test[test_encode_ipc_message_metadata_content]("test_encode_ipc_message_metadata_content", passed, failed)
+    run_test[test_encode_ipc_message_body_aligned]("test_encode_ipc_message_body_aligned", passed, failed)
+    run_test[test_encode_ipc_message_empty_body]("test_encode_ipc_message_empty_body", passed, failed)
+    run_test[test_encode_eos_exact_bytes]("test_encode_eos_exact_bytes", passed, failed)
 
     # Phase 2 — Arrow type encoding/decoding
-    run_test("test_arrow_type_null_tag", passed, failed, test_arrow_type_null_tag)
-    run_test("test_arrow_type_int32_signed", passed, failed, test_arrow_type_int32_signed)
-    run_test("test_arrow_type_int64_unsigned", passed, failed, test_arrow_type_int64_unsigned)
-    run_test("test_arrow_type_float_single", passed, failed, test_arrow_type_float_single)
-    run_test("test_arrow_type_float_double", passed, failed, test_arrow_type_float_double)
-    run_test("test_arrow_type_utf8_tag", passed, failed, test_arrow_type_utf8_tag)
-    run_test("test_arrow_type_bool_tag", passed, failed, test_arrow_type_bool_tag)
-    run_test("test_arrow_type_unknown_discriminant_raises", passed, failed, test_arrow_type_unknown_discriminant_raises)
+    run_test[test_arrow_type_null_tag]("test_arrow_type_null_tag", passed, failed)
+    run_test[test_arrow_type_int32_signed]("test_arrow_type_int32_signed", passed, failed)
+    run_test[test_arrow_type_int64_unsigned]("test_arrow_type_int64_unsigned", passed, failed)
+    run_test[test_arrow_type_float_single]("test_arrow_type_float_single", passed, failed)
+    run_test[test_arrow_type_float_double]("test_arrow_type_float_double", passed, failed)
+    run_test[test_arrow_type_utf8_tag]("test_arrow_type_utf8_tag", passed, failed)
+    run_test[test_arrow_type_bool_tag]("test_arrow_type_bool_tag", passed, failed)
+    run_test[test_arrow_type_unknown_discriminant_raises]("test_arrow_type_unknown_discriminant_raises", passed, failed)
 
     # Phase 3 — Schema message encoding/decoding
-    run_test("test_schema_empty_fields", passed, failed, test_schema_empty_fields)
-    run_test("test_schema_single_field_int32", passed, failed, test_schema_single_field_int32)
-    run_test("test_schema_nullable_field", passed, failed, test_schema_nullable_field)
-    run_test("test_schema_field_name_roundtrip", passed, failed, test_schema_field_name_roundtrip)
-    run_test("test_schema_multiple_fields", passed, failed, test_schema_multiple_fields)
-    run_test("test_schema_all_types", passed, failed, test_schema_all_types)
-    run_test("test_decode_schema_wrong_header_type", passed, failed, test_decode_schema_wrong_header_type)
-    run_test("test_schema_endianness_roundtrip", passed, failed, test_schema_endianness_roundtrip)
+    run_test[test_schema_empty_fields]("test_schema_empty_fields", passed, failed)
+    run_test[test_schema_single_field_int32]("test_schema_single_field_int32", passed, failed)
+    run_test[test_schema_nullable_field]("test_schema_nullable_field", passed, failed)
+    run_test[test_schema_field_name_roundtrip]("test_schema_field_name_roundtrip", passed, failed)
+    run_test[test_schema_multiple_fields]("test_schema_multiple_fields", passed, failed)
+    run_test[test_schema_all_types]("test_schema_all_types", passed, failed)
+    run_test[test_decode_schema_wrong_header_type]("test_decode_schema_wrong_header_type", passed, failed)
+    run_test[test_schema_endianness_roundtrip]("test_schema_endianness_roundtrip", passed, failed)
 
     # Security / adversarial tests
-    run_test("test_adversarial_ipc_pad8_overflow", passed, failed, test_adversarial_ipc_pad8_overflow)
-    run_test("test_adversarial_encode_huge_metadata", passed, failed, test_adversarial_encode_huge_metadata)
-    run_test("test_adversarial_decode_negative_pos", passed, failed, test_adversarial_decode_negative_pos)
-    run_test("test_adversarial_decode_huge_meta_len", passed, failed, test_adversarial_decode_huge_meta_len)
-    run_test("test_adversarial_decode_truncated_buf", passed, failed, test_adversarial_decode_truncated_buf)
-    run_test("test_adversarial_encode_arrow_type_bad_tag", passed, failed, test_adversarial_encode_arrow_type_bad_tag)
+    run_test[test_adversarial_ipc_pad8_overflow]("test_adversarial_ipc_pad8_overflow", passed, failed)
+    run_test[test_adversarial_encode_huge_metadata]("test_adversarial_encode_huge_metadata", passed, failed)
+    run_test[test_adversarial_decode_negative_pos]("test_adversarial_decode_negative_pos", passed, failed)
+    run_test[test_adversarial_decode_huge_meta_len]("test_adversarial_decode_huge_meta_len", passed, failed)
+    run_test[test_adversarial_decode_truncated_buf]("test_adversarial_decode_truncated_buf", passed, failed)
+    run_test[test_adversarial_encode_arrow_type_bad_tag]("test_adversarial_encode_arrow_type_bad_tag", passed, failed)
 
     # Phase 4 — RecordBatch message encoding/decoding
-    run_test("test_rb_empty", passed, failed, test_rb_empty)
-    run_test("test_rb_row_count", passed, failed, test_rb_row_count)
-    run_test("test_rb_single_node", passed, failed, test_rb_single_node)
-    run_test("test_rb_multi_node", passed, failed, test_rb_multi_node)
-    run_test("test_rb_single_buffer", passed, failed, test_rb_single_buffer)
-    run_test("test_rb_multi_buffer", passed, failed, test_rb_multi_buffer)
-    run_test("test_rb_body_passthrough", passed, failed, test_rb_body_passthrough)
-    run_test("test_decode_rb_wrong_header_type", passed, failed, test_decode_rb_wrong_header_type)
-    run_test("test_decode_rb_negative_pos", passed, failed, test_decode_rb_negative_pos)
+    run_test[test_rb_empty]("test_rb_empty", passed, failed)
+    run_test[test_rb_row_count]("test_rb_row_count", passed, failed)
+    run_test[test_rb_single_node]("test_rb_single_node", passed, failed)
+    run_test[test_rb_multi_node]("test_rb_multi_node", passed, failed)
+    run_test[test_rb_single_buffer]("test_rb_single_buffer", passed, failed)
+    run_test[test_rb_multi_buffer]("test_rb_multi_buffer", passed, failed)
+    run_test[test_rb_body_passthrough]("test_rb_body_passthrough", passed, failed)
+    run_test[test_decode_rb_wrong_header_type]("test_decode_rb_wrong_header_type", passed, failed)
+    run_test[test_decode_rb_negative_pos]("test_decode_rb_negative_pos", passed, failed)
 
     # Phase 5 — ArrowArray typed column encoding/decoding
-    run_test("test_encode_array_int32_no_nulls", passed, failed, test_encode_array_int32_no_nulls)
-    run_test("test_encode_array_int32_with_nulls", passed, failed, test_encode_array_int32_with_nulls)
-    run_test("test_encode_array_int64", passed, failed, test_encode_array_int64)
-    run_test("test_encode_array_float64", passed, failed, test_encode_array_float64)
-    run_test("test_encode_array_bool", passed, failed, test_encode_array_bool)
-    run_test("test_encode_array_utf8", passed, failed, test_encode_array_utf8)
-    run_test("test_encode_array_null", passed, failed, test_encode_array_null)
-    run_test("test_encode_array_null_count", passed, failed, test_encode_array_null_count)
-    run_test("test_record_batch_encode_decode", passed, failed, test_record_batch_encode_decode)
-    run_test("test_record_batch_null_values_preserved", passed, failed, test_record_batch_null_values_preserved)
+    run_test[test_encode_array_int32_no_nulls]("test_encode_array_int32_no_nulls", passed, failed)
+    run_test[test_encode_array_int32_with_nulls]("test_encode_array_int32_with_nulls", passed, failed)
+    run_test[test_encode_array_int64]("test_encode_array_int64", passed, failed)
+    run_test[test_encode_array_float64]("test_encode_array_float64", passed, failed)
+    run_test[test_encode_array_bool]("test_encode_array_bool", passed, failed)
+    run_test[test_encode_array_utf8]("test_encode_array_utf8", passed, failed)
+    run_test[test_encode_array_null]("test_encode_array_null", passed, failed)
+    run_test[test_encode_array_null_count]("test_encode_array_null_count", passed, failed)
+    run_test[test_record_batch_encode_decode]("test_record_batch_encode_decode", passed, failed)
+    run_test[test_record_batch_null_values_preserved]("test_record_batch_null_values_preserved", passed, failed)
 
     # Phase 5 security adversarial tests
-    run_test("test_adversarial_decode_array_negative_offset", passed, failed, test_adversarial_decode_array_negative_offset)
-    run_test("test_adversarial_decode_array_negative_length", passed, failed, test_adversarial_decode_array_negative_length)
+    run_test[test_adversarial_decode_array_negative_offset]("test_adversarial_decode_array_negative_offset", passed, failed)
+    run_test[test_adversarial_decode_array_negative_length]("test_adversarial_decode_array_negative_length", passed, failed)
 
     # Phase 6 — IPC File Format (Feather v2)
-    run_test("test_arrow_file_magic_prefix", passed, failed, test_arrow_file_magic_prefix)
-    run_test("test_arrow_file_magic_suffix", passed, failed, test_arrow_file_magic_suffix)
-    run_test("test_arrow_file_footer_size", passed, failed, test_arrow_file_footer_size)
-    run_test("test_arrow_file_schema_roundtrip", passed, failed, test_arrow_file_schema_roundtrip)
-    run_test("test_arrow_file_zero_batches", passed, failed, test_arrow_file_zero_batches)
-    run_test("test_arrow_file_single_batch", passed, failed, test_arrow_file_single_batch)
-    run_test("test_arrow_file_multi_batch", passed, failed, test_arrow_file_multi_batch)
-    run_test("test_decode_arrow_file_wrong_magic", passed, failed, test_decode_arrow_file_wrong_magic)
+    run_test[test_arrow_file_magic_prefix]("test_arrow_file_magic_prefix", passed, failed)
+    run_test[test_arrow_file_magic_suffix]("test_arrow_file_magic_suffix", passed, failed)
+    run_test[test_arrow_file_footer_size]("test_arrow_file_footer_size", passed, failed)
+    run_test[test_arrow_file_schema_roundtrip]("test_arrow_file_schema_roundtrip", passed, failed)
+    run_test[test_arrow_file_zero_batches]("test_arrow_file_zero_batches", passed, failed)
+    run_test[test_arrow_file_single_batch]("test_arrow_file_single_batch", passed, failed)
+    run_test[test_arrow_file_multi_batch]("test_arrow_file_multi_batch", passed, failed)
+    run_test[test_decode_arrow_file_wrong_magic]("test_decode_arrow_file_wrong_magic", passed, failed)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:

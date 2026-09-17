@@ -29,7 +29,7 @@ def read_csv(
     # Collect non-empty lines (split returns StringSlice, convert to String)
     var lines = List[String]()
     for i in range(len(raw_lines)):
-        if len(raw_lines[i]) > 0:
+        if raw_lines[i].byte_length() > 0:
             lines.append(String(raw_lines[i]))
 
     if len(lines) == 0:
@@ -76,7 +76,7 @@ def infer_type(values: List[String]) -> ArrowType:
     var all_float = True
 
     for i in range(len(values)):
-        if len(values[i]) == 0:
+        if values[i].byte_length() == 0:
             continue  # null — skip for type inference
         has_non_empty = True
 
@@ -124,7 +124,7 @@ def infer_schema(
         for row in range(len(rows)):
             var v = rows[row][col]
             col_values.append(v)
-            if len(v) == 0:
+            if v.byte_length() == 0:
                 nullable = True
 
         var arrow_type = infer_type(col_values)
@@ -146,7 +146,7 @@ def _build_validity(values: List[String], null_count: Int) raises -> List[UInt8]
     for _ in range(n_bytes):
         validity.append(UInt8(0))
     for i in range(n):
-        if len(values[i]) > 0:
+        if values[i].byte_length() > 0:
             # Bit i in LSB-first order
             validity[i // 8] |= UInt8(1 << (i % 8))
     return validity^
@@ -166,7 +166,7 @@ def build_array(
     # Count nulls
     var null_count = 0
     for i in range(length):
-        if len(values[i]) == 0:
+        if values[i].byte_length() == 0:
             null_count += 1
 
     # Build validity bitmap (only when there are nulls)
@@ -185,7 +185,7 @@ def build_array(
             value_bytes.append(UInt8(0))
         for i in range(length):
             var int_val = Int64(0)
-            if len(values[i]) > 0:
+            if values[i].byte_length() > 0:
                 int_val = Int64(Int(values[i]))
             write_i64_le(value_bytes, i * 8, int_val)
         return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
@@ -198,7 +198,7 @@ def build_array(
             value_bytes.append(UInt8(0))
         for i in range(length):
             var int_val = Int(0)
-            if len(values[i]) > 0:
+            if values[i].byte_length() > 0:
                 int_val = Int(values[i])
             # Write LE bytes for the int value
             for b in range(byte_width):
@@ -212,7 +212,7 @@ def build_array(
             value_bytes.append(UInt8(0))
         for i in range(length):
             var f_val = Float64(0.0)
-            if len(values[i]) > 0:
+            if values[i].byte_length() > 0:
                 f_val = Float64(values[i])
             write_f64_le(value_bytes, i * 8, f_val)
         return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
@@ -225,7 +225,7 @@ def build_array(
             value_bytes.append(UInt8(0))
         for i in range(length):
             var f_val = Float64(0.0)
-            if len(values[i]) > 0:
+            if values[i].byte_length() > 0:
                 f_val = Float64(values[i])
             write_f64_le(value_bytes, i * 8, f_val)
         return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
@@ -240,7 +240,7 @@ def build_array(
     var value_bytes = List[UInt8]()
     var cur_byte = 0
     for i in range(length):
-        if len(values[i]) > 0:
+        if values[i].byte_length() > 0:
             var sb = values[i].as_bytes()
             for j in range(len(sb)):
                 value_bytes.append(sb[j])

@@ -203,15 +203,15 @@ struct ArrowInt(Copyable, Movable):
     var bit_width: Int32
     var is_signed: Bool
 
-    fn __init__(out self, bit_width: Int32, is_signed: Bool):
+    def __init__(out self, bit_width: Int32, is_signed: Bool):
         self.bit_width = bit_width
         self.is_signed = is_signed
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self.bit_width = copy.bit_width
         self.is_signed = copy.is_signed
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self.bit_width = take.bit_width
         self.is_signed = take.is_signed
 
@@ -223,13 +223,13 @@ struct ArrowFloat(Copyable, Movable):
     """Metadata for FloatingPoint Arrow type."""
     var precision: UInt16   # 1=Single, 2=Double
 
-    fn __init__(out self, precision: UInt16):
+    def __init__(out self, precision: UInt16):
         self.precision = precision
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self.precision = copy.precision
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self.precision = take.precision
 
     def copy(self) -> Self:
@@ -242,17 +242,17 @@ struct ArrowType(Copyable, Movable):
     var int_meta: ArrowInt
     var float_meta: ArrowFloat
 
-    fn __init__(out self, tag: UInt8, int_bit_width: Int32, int_is_signed: Bool, float_precision: UInt16):
+    def __init__(out self, tag: UInt8, int_bit_width: Int32, int_is_signed: Bool, float_precision: UInt16):
         self.tag = tag
         self.int_meta = ArrowInt(int_bit_width, int_is_signed)
         self.float_meta = ArrowFloat(float_precision)
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self.tag = copy.tag
         self.int_meta = copy.int_meta.copy()
         self.float_meta = copy.float_meta.copy()
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self.tag = take.tag
         self.int_meta = take.int_meta.copy()
         self.float_meta = take.float_meta.copy()
@@ -356,17 +356,17 @@ struct ArrowField(Copyable, Movable):
     var type: ArrowType
     var nullable: Bool
 
-    fn __init__(out self, name: String, type: ArrowType, nullable: Bool):
+    def __init__(out self, name: String, type: ArrowType, nullable: Bool):
         self.name = name
         self.type = type.copy()
         self.nullable = nullable
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self.name = copy.name
         self.type = copy.type.copy()
         self.nullable = copy.nullable
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self.name = take.name^
         self.type = take.type^
         self.nullable = take.nullable
@@ -380,19 +380,19 @@ struct ArrowSchema(Copyable, Movable):
     var fields: List[ArrowField]
     var endianness: Int16   # 0 = little-endian, 1 = big-endian
 
-    fn __init__(out self, fields: List[ArrowField], endianness: Int16 = Int16(0)):
+    def __init__(out self, fields: List[ArrowField], endianness: Int16 = Int16(0)):
         self.fields = List[ArrowField]()
         for i in range(len(fields)):
             self.fields.append(fields[i].copy())
         self.endianness = endianness
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self.fields = List[ArrowField]()
         for i in range(len(copy.fields)):
             self.fields.append(copy.fields[i].copy())
         self.endianness = copy.endianness
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self.fields = take.fields^
         self.endianness = take.endianness
 
@@ -520,15 +520,15 @@ struct FieldNode(Copyable, Movable):
     var length: Int64
     var null_count: Int64
 
-    fn __init__(out self, length: Int64, null_count: Int64):
+    def __init__(out self, length: Int64, null_count: Int64):
         self.length = length
         self.null_count = null_count
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self.length = copy.length
         self.null_count = copy.null_count
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self.length = take.length
         self.null_count = take.null_count
 
@@ -542,15 +542,15 @@ struct BufferDesc(Copyable, Movable):
     var offset: Int64
     var length: Int64
 
-    fn __init__(out self, offset: Int64, length: Int64):
+    def __init__(out self, offset: Int64, length: Int64):
         self.offset = offset
         self.length = length
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self.offset = copy.offset
         self.length = copy.length
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self.offset = take.offset
         self.length = take.length
 
@@ -718,7 +718,7 @@ struct ArrowArray(Copyable, Movable):
     var offsets: List[UInt8]    # variable-length types: (length+1) * 4 LE bytes
     var values: List[UInt8]     # raw value bytes
 
-    fn __init__(
+    def __init__(
         out self,
         type: ArrowType,
         length: Int,
@@ -740,7 +740,7 @@ struct ArrowArray(Copyable, Movable):
         for i in range(len(values)):
             self.values.append(values[i])
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self.type = copy.type.copy()
         self.length = copy.length
         self.null_count = copy.null_count
@@ -754,7 +754,7 @@ struct ArrowArray(Copyable, Movable):
         for i in range(len(copy.values)):
             self.values.append(copy.values[i])
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self.type = take.type^
         self.length = take.length
         self.null_count = take.null_count
@@ -1008,19 +1008,19 @@ struct RecordBatch(Copyable, Movable):
     var length: Int64
     var columns: List[ArrowArray]
 
-    fn __init__(out self, length: Int64, columns: List[ArrowArray]):
+    def __init__(out self, length: Int64, columns: List[ArrowArray]):
         self.length = length
         self.columns = List[ArrowArray]()
         for i in range(len(columns)):
             self.columns.append(columns[i].copy())
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self.length = copy.length
         self.columns = List[ArrowArray]()
         for i in range(len(copy.columns)):
             self.columns.append(copy.columns[i].copy())
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self.length = take.length
         self.columns = take.columns^
 

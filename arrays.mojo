@@ -61,7 +61,7 @@ struct PrimitiveArray[T: PrimitiveType](Copyable, Movable):
     var _validity: List[UInt8]
     var _values: List[UInt8]
 
-    fn __init__(
+    def __init__(
         out self,
         length: Int,
         null_count: Int,
@@ -73,13 +73,13 @@ struct PrimitiveArray[T: PrimitiveType](Copyable, Movable):
         self._validity = validity.copy()
         self._values = values.copy()
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self._length = copy._length
         self._null_count = copy._null_count
         self._validity = copy._validity.copy()
         self._values = copy._values.copy()
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self._length = take._length
         self._null_count = take._null_count
         self._validity = take._validity^
@@ -130,7 +130,7 @@ struct PrimitiveArray[T: PrimitiveType](Copyable, Movable):
         """Return the value at index i (unsafe if element is null)."""
         var sz = _dtype_bytes(Self.T.native)
         var offset = i * sz
-        return (self._values.unsafe_ptr() + offset).bitcast[Scalar[Self.T.native]]()[]
+        return self._values.unsafe_ptr().unsafe_offset(offset).unsafe_bitcast[Scalar[Self.T.native]]()[]
 
 
 # ── StringArray ───────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ struct StringArray(Copyable, Movable):
     var _offsets: List[Int32]
     var _values: List[UInt8]
 
-    fn __init__(
+    def __init__(
         out self,
         length: Int,
         null_count: Int,
@@ -164,14 +164,14 @@ struct StringArray(Copyable, Movable):
         self._offsets = offsets.copy()
         self._values = values.copy()
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self._length = copy._length
         self._null_count = copy._null_count
         self._validity = copy._validity.copy()
         self._offsets = copy._offsets.copy()
         self._values = copy._values.copy()
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self._length = take._length
         self._null_count = take._null_count
         self._validity = take._validity^
@@ -211,7 +211,7 @@ struct BinaryArray(Copyable, Movable):
     var _offsets: List[Int32]
     var _values: List[UInt8]
 
-    fn __init__(
+    def __init__(
         out self,
         length: Int,
         null_count: Int,
@@ -225,14 +225,14 @@ struct BinaryArray(Copyable, Movable):
         self._offsets = offsets.copy()
         self._values = values.copy()
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self._length = copy._length
         self._null_count = copy._null_count
         self._validity = copy._validity.copy()
         self._offsets = copy._offsets.copy()
         self._values = copy._values.copy()
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self._length = take._length
         self._null_count = take._null_count
         self._validity = take._validity^
@@ -271,7 +271,7 @@ struct AnyArray(Copyable, Movable):
     var _values: List[UInt8]
     var _offsets: List[Int32]
 
-    fn __init__(
+    def __init__(
         out self,
         dtype: AnyDataType,
         length: Int,
@@ -287,7 +287,7 @@ struct AnyArray(Copyable, Movable):
         self._values = values.copy()
         self._offsets = offsets.copy()
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self._dtype = copy._dtype
         self._length = copy._length
         self._null_count = copy._null_count
@@ -295,7 +295,7 @@ struct AnyArray(Copyable, Movable):
         self._values = copy._values.copy()
         self._offsets = copy._offsets.copy()
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self._dtype = take._dtype^
         self._length = take._length
         self._null_count = take._null_count

@@ -16,17 +16,17 @@ from flatbuffers import read_i32_le, read_i64_le, read_f64_le
 from std.pathlib import Path
 
 
-fn assert_true(cond: Bool, msg: String = "") raises:
+def assert_true(cond: Bool, msg: String = "") raises:
     if not cond:
-        raise Error(msg if len(msg) > 0 else "expected True")
+        raise Error(msg if msg.byte_length() > 0 else "expected True")
 
 
-fn assert_eq_int(actual: Int, expected: Int, msg: String = "") raises:
+def assert_eq_int(actual: Int, expected: Int, msg: String = "") raises:
     if actual != expected:
-        raise Error((msg + ": " if len(msg) > 0 else "") + "expected " + String(expected) + " got " + String(actual))
+        raise Error((msg + ": " if msg.byte_length() > 0 else "") + "expected " + String(expected) + " got " + String(actual))
 
 
-fn _write_csv(path: String, content: String) raises:
+def _write_csv(path: String, content: String) raises:
     Path(path).write_text(content)
 
 
@@ -35,7 +35,7 @@ fn _write_csv(path: String, content: String) raises:
 # ============================================================================
 
 
-fn test_parse_csv_headers() raises:
+def test_parse_csv_headers() raises:
     """Column names are extracted from the first row of the CSV."""
     _write_csv("/tmp/test_headers.csv", "id,name,score\n1,alice,9.5\n2,bob,8.0\n")
     var result = read_csv("/tmp/test_headers.csv")
@@ -46,7 +46,7 @@ fn test_parse_csv_headers() raises:
     assert_true(headers[2] == "score", "headers[2]=score")
 
 
-fn test_parse_csv_rows() raises:
+def test_parse_csv_rows() raises:
     """Row values match the CSV input exactly."""
     _write_csv("/tmp/test_rows.csv", "a,b\n10,20\n30,40\n")
     var result = read_csv("/tmp/test_rows.csv")
@@ -59,7 +59,7 @@ fn test_parse_csv_rows() raises:
     assert_true(rows[1][1] == "40", "row1[1]=40")
 
 
-fn test_infer_int_column() raises:
+def test_infer_int_column() raises:
     """All-integer column infers as Int64."""
     var vals = List[String]()
     vals.append(String("1"))
@@ -71,7 +71,7 @@ fn test_infer_int_column() raises:
     assert_true(t.int_meta.is_signed, "int64 is_signed")
 
 
-fn test_infer_float_column() raises:
+def test_infer_float_column() raises:
     """All-float column infers as Float64."""
     var vals = List[String]()
     vals.append(String("1.5"))
@@ -82,7 +82,7 @@ fn test_infer_float_column() raises:
     assert_true(t.float_meta.precision == UInt16(2), "float64 precision=2")
 
 
-fn test_infer_string_column() raises:
+def test_infer_string_column() raises:
     """Mixed or non-numeric column infers as Utf8."""
     var vals = List[String]()
     vals.append(String("alice"))
@@ -92,7 +92,7 @@ fn test_infer_string_column() raises:
     assert_true(t.tag == TYPE_UTF8(), "utf8 column tag (mixed)")
 
 
-fn test_csv_roundtrip() raises:
+def test_csv_roundtrip() raises:
     """CSV -> feather -> decode_arrow_file returns identical data."""
     _write_csv(
         "/tmp/test_roundtrip.csv",
@@ -122,7 +122,7 @@ fn test_csv_roundtrip() raises:
     assert_true(score_col.type.tag == TYPE_FLOAT(), "score is float")
 
 
-fn test_csv_to_feather_file() raises:
+def test_csv_to_feather_file() raises:
     """csv_to_feather writes a real file readable by decode_arrow_file."""
     _write_csv(
         "/tmp/test_e2e.csv",
@@ -155,7 +155,9 @@ fn test_csv_to_feather_file() raises:
 # ============================================================================
 
 
-fn run_test(name: String, mut passed: Int, mut failed: Int, test_fn: fn () raises -> None):
+def run_test[test_fn: def() thin raises -> None](
+    name: String, mut passed: Int, mut failed: Int
+):
     try:
         test_fn()
         print("  PASS: " + name)
@@ -165,18 +167,18 @@ fn run_test(name: String, mut passed: Int, mut failed: Int, test_fn: fn () raise
         failed += 1
 
 
-fn main() raises:
+def main() raises:
     print("=== csv_arrow tests ===")
     var passed = 0
     var failed = 0
 
-    run_test("test_parse_csv_headers", passed, failed, test_parse_csv_headers)
-    run_test("test_parse_csv_rows", passed, failed, test_parse_csv_rows)
-    run_test("test_infer_int_column", passed, failed, test_infer_int_column)
-    run_test("test_infer_float_column", passed, failed, test_infer_float_column)
-    run_test("test_infer_string_column", passed, failed, test_infer_string_column)
-    run_test("test_csv_roundtrip", passed, failed, test_csv_roundtrip)
-    run_test("test_csv_to_feather_file", passed, failed, test_csv_to_feather_file)
+    run_test[test_parse_csv_headers]("test_parse_csv_headers", passed, failed)
+    run_test[test_parse_csv_rows]("test_parse_csv_rows", passed, failed)
+    run_test[test_infer_int_column]("test_infer_int_column", passed, failed)
+    run_test[test_infer_float_column]("test_infer_float_column", passed, failed)
+    run_test[test_infer_string_column]("test_infer_string_column", passed, failed)
+    run_test[test_csv_roundtrip]("test_csv_roundtrip", passed, failed)
+    run_test[test_csv_to_feather_file]("test_csv_to_feather_file", passed, failed)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:

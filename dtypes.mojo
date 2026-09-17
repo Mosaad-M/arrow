@@ -33,13 +33,13 @@ trait PrimitiveType(DataType):
 struct NullType(DataType, ImplicitlyCopyable, Movable):
     """Arrow Null type — all values are null; no data buffers."""
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
@@ -51,182 +51,182 @@ struct BoolType(PrimitiveType, ImplicitlyCopyable, Movable):
     """
     comptime native: DType = DType.bool
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct Int8Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.int8
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct Int16Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.int16
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct Int32Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.int32
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct Int64Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.int64
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct UInt8Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.uint8
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct UInt16Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.uint16
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct UInt32Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.uint32
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct UInt64Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.uint64
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct Float16Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.float16
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct Float32Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.float32
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct Float64Type(PrimitiveType, ImplicitlyCopyable, Movable):
     comptime native: DType = DType.float64
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct BinaryType(DataType, ImplicitlyCopyable, Movable):
     """Variable-length opaque binary data (Arrow Binary type)."""
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
 struct StringType(DataType, ImplicitlyCopyable, Movable):
     """Variable-length UTF-8 string data (Arrow Utf8 type)."""
 
-    fn __init__(out self):
+    def __init__(out self):
         pass
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         pass
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         pass
 
 
@@ -264,13 +264,13 @@ struct AnyDataType(ImplicitlyCopyable, Movable):
 
     var _data: Self._V
 
-    fn __init__(out self, data: Self._V):
+    def __init__(out self, data: Self._V):
         self._data = data
 
-    fn __copyinit__(out self, copy: Self):
+    def __copyinit__(out self, copy: Self):
         self._data = copy._data
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self._data = take._data^
 
     # ── Factory methods ────────────────────────────────────────────────────────

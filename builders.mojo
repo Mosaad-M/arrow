@@ -44,13 +44,13 @@ struct PrimitiveBuilder[T: PrimitiveType](Movable):
     var _length: Int
     var _null_count: Int
 
-    fn __init__(out self):
+    def __init__(out self):
         self._values = List[UInt8]()
         self._null_bits = List[Bool]()
         self._length = 0
         self._null_count = 0
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self._values = take._values^
         self._null_bits = take._null_bits^
         self._length = take._length
@@ -63,7 +63,7 @@ struct PrimitiveBuilder[T: PrimitiveType](Movable):
         # Reserve sz bytes then write val directly into the buffer.
         for _ in range(sz):
             self._values.append(UInt8(0))
-        (self._values.unsafe_ptr() + old_len).bitcast[Scalar[Self.T.native]]()[] = val
+        self._values.unsafe_ptr().unsafe_offset(old_len).unsafe_bitcast[Scalar[Self.T.native]]()[] = val
         self._null_bits.append(True)
         self._length += 1
 
@@ -102,7 +102,7 @@ struct StringBuilder(Movable):
     var _length: Int
     var _null_count: Int
 
-    fn __init__(out self):
+    def __init__(out self):
         self._values = List[UInt8]()
         self._offsets = List[Int32]()
         self._null_bits = List[Bool]()
@@ -110,7 +110,7 @@ struct StringBuilder(Movable):
         self._length = 0
         self._null_count = 0
 
-    fn __moveinit__(out self, deinit take: Self):
+    def __moveinit__(out self, deinit take: Self):
         self._values = take._values^
         self._offsets = take._offsets^
         self._null_bits = take._null_bits^

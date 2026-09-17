@@ -14,12 +14,12 @@ from arrow import (
 )
 
 
-fn bench(name: String, ns: UInt, iters: Int):
-    var per_op = ns / UInt(iters)
+def bench(name: String, ns: Int, iters: Int):
+    var per_op = ns / iters
     print("  " + name + ": " + String(per_op) + " ns/op")
 
 
-fn bench_ipc_pad8() raises:
+def bench_ipc_pad8() raises:
     var iters = 1_000_000
     var t0 = perf_counter_ns()
     var acc = 0
@@ -30,7 +30,7 @@ fn bench_ipc_pad8() raises:
     bench("bench_ipc_pad8", elapsed, iters)
 
 
-fn bench_encode_ipc_message_1kb() raises:
+def bench_encode_ipc_message_1kb() raises:
     var iters = 10_000
     var meta = List[UInt8](capacity=32)
     for i in range(32):
@@ -47,13 +47,21 @@ fn bench_encode_ipc_message_1kb() raises:
     bench("bench_encode_ipc_message_1kb", elapsed, iters)
 
 
-fn bench_decode_ipc_message_1kb() raises:
-    var meta = List[UInt8](capacity=32)
-    for i in range(32):
-        meta.append(UInt8(i))
+def bench_decode_ipc_message_1kb() raises:
+    # `metadata` must be a real FlatBuffers Message table (decode_ipc_message
+    # reads bodyLength from slot 3), not arbitrary filler bytes — see
+    # test_decode_schema_wrong_header_type in test_arrow.mojo for the same
+    # hand-built-message pattern.
     var body = List[UInt8](capacity=1024)
     for i in range(1024):
         body.append(UInt8(i % 256))
+    var b = FlatBufferBuilder(128)
+    b.start_table()
+    b.add_field_i16(0, Int16(4))
+    b.add_field_u8(1, UInt8(2))
+    b.add_field_i64(3, Int64(len(body)))
+    var msg_off = b.end_table()
+    var meta = b.finish(msg_off)
     var msg = encode_ipc_message(meta, body)
 
     var iters = 10_000
@@ -65,7 +73,7 @@ fn bench_decode_ipc_message_1kb() raises:
     bench("bench_decode_ipc_message_1kb", elapsed, iters)
 
 
-fn bench_type_encode_decode_int32() raises:
+def bench_type_encode_decode_int32() raises:
     var iters = 50_000
     var t0 = perf_counter_ns()
     for _ in range(iters):
@@ -82,7 +90,7 @@ fn bench_type_encode_decode_int32() raises:
     bench("bench_type_encode_decode_int32", elapsed, iters)
 
 
-fn bench_type_encode_decode_utf8() raises:
+def bench_type_encode_decode_utf8() raises:
     var iters = 50_000
     var t0 = perf_counter_ns()
     for _ in range(iters):
@@ -99,7 +107,7 @@ fn bench_type_encode_decode_utf8() raises:
     bench("bench_type_encode_decode_utf8", elapsed, iters)
 
 
-fn bench_encode_ipc_empty() raises:
+def bench_encode_ipc_empty() raises:
     var iters = 100_000
     var meta = List[UInt8](capacity=8)
     for i in range(8):
@@ -114,7 +122,7 @@ fn bench_encode_ipc_empty() raises:
     bench("bench_encode_ipc_empty_body", elapsed, iters)
 
 
-fn bench_encode_schema_1field() raises:
+def bench_encode_schema_1field() raises:
     var iters = 10_000
     var t0 = perf_counter_ns()
     for _ in range(iters):
@@ -127,7 +135,7 @@ fn bench_encode_schema_1field() raises:
     bench("bench_encode_schema_1field", elapsed, iters)
 
 
-fn bench_encode_schema_10fields() raises:
+def bench_encode_schema_10fields() raises:
     var iters = 5_000
     var t0 = perf_counter_ns()
     for _ in range(iters):
@@ -149,7 +157,7 @@ fn bench_encode_schema_10fields() raises:
     bench("bench_encode_schema_10fields", elapsed, iters)
 
 
-fn bench_decode_schema_10fields() raises:
+def bench_decode_schema_10fields() raises:
     var fields = List[ArrowField]()
     fields.append(ArrowField("id", ArrowType.int_(64, False), False))
     fields.append(ArrowField("name", ArrowType.utf8(), True))
@@ -173,7 +181,7 @@ fn bench_decode_schema_10fields() raises:
     bench("bench_decode_schema_10fields", elapsed, iters)
 
 
-fn main() raises:
+def main() raises:
     print("=== arrow benchmarks ===")
     bench_ipc_pad8()
     bench_encode_ipc_message_1kb()

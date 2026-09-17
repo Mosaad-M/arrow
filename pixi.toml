@@ -18,4 +18,4 @@ bench-arrow = "bash -c 'mojo run $(cat .mojo_flags 2>/dev/null || echo \"-I $FLA
 format = "mblack arrow.mojo test_arrow.mojo csv_arrow.mojo"
 
 [dependencies]
-mojo = ">=0.26.2"
+mojo = ">=1.0.0"
