@@ -1141,19 +1141,27 @@ def encode_arrow_file(
         var rb_msg = encode_record_batch(schema, arrays)
         var rb_msg_len = len(rb_msg)
 
-        # metaDataLength = 8 (cont marker + len field) + padded metadata
-        # bodyLength = batch body size
-        # We encode the full message; body length is stored in the FlatBuffer
-        # but for the Block we need it separately.
-        # Parse the body length from the encoded message's FlatBuffer header.
+        # decode_ipc_message's 3rd return value (next_pos) is the position
+        # PAST the body (= padded_header_end + ipc_pad8(body_len)), not the
+        # end of the header -- so `rb_msg_len - rb_next` computed ~0 instead
+        # of the real body length (a real bug, caught by real Arrow/pyarrow
+        # rejecting the file with a Block/Message bodyLength mismatch; this
+        # package's own decode_arrow_file never noticed, since it re-derives
+        # batch boundaries by parsing each message directly rather than
+        # trusting these two Block fields). Use the actual decoded body
+        # bytes' length directly, and derive metaDataLength (the padded
+        # header size) by subtracting the body's own padding back out of
+        # next_pos -- both computed from values decode_ipc_message already
+        # returns, no signature change needed.
         var ipc_result = decode_ipc_message(rb_msg, 0)
         var rb_meta = ipc_result[0].copy()
+        var rb_body = ipc_result[1].copy()
         var rb_next = ipc_result[2]
-        var rb_body_len = Int64(rb_msg_len - rb_next)
+        var rb_body_len = Int64(len(rb_body))
 
         # metaDataLength = total IPC envelope size excluding body and its padding
         # (i.e., the padded header: continuation + meta_len_field + metadata + header_pad)
-        var rb_meta_len = Int32(rb_next)
+        var rb_meta_len = Int32(rb_next - ipc_pad8(len(rb_body)))
 
         var blk = _block_bytes(file_offset, rb_meta_len, rb_body_len)
         for i in range(24):

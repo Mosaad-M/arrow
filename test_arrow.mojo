@@ -26,7 +26,7 @@ from arrow import (
     decode_arrow_file,
 )
 from flatbuffers import (
-    read_i32_le, read_u32_le, read_f64_le, write_u32_le, write_i32_le, write_f64_le,
+    read_i32_le, read_i64_le, read_u32_le, read_f64_le, write_u32_le, write_i32_le, write_f64_le,
     FlatBufferBuilder, FlatBuffersReader,
 )
 
@@ -1074,6 +1074,64 @@ def test_arrow_file_single_batch() raises:
     assert_true(_read_i32_from(c0.values, 4) == Int32(20), "col[1]=20")
 
 
+def test_arrow_file_block_body_length_matches_real_message() raises:
+    """Regression test for a real bug: the Footer's Block.bodyLength (and
+    metaDataLength) were computed from decode_ipc_message's returned
+    next_pos, which already points PAST the body -- so `rb_msg_len -
+    rb_next` came out ~0 instead of the actual body size. This codebase's
+    own decode_arrow_file never noticed, because it re-derives batch
+    boundaries by parsing each RecordBatch message directly at
+    Block.offset rather than trusting Block.bodyLength/metaDataLength --
+    but real Arrow/pyarrow DOES trust and cross-check those fields, and
+    rejected the file outright ("Mismatching body length for IPC message
+    (Block.bodyLength: 0 vs. Message.bodyLength: 56)"). This test reads
+    the Block struct the same way a real, spec-compliant reader would and
+    cross-checks it against the RecordBatch message's own embedded
+    bodyLength, independent of this package's own (bug-blind) decoder.
+    """
+    var schema = _make_simple_schema()
+    var v = List[UInt8]()
+    _write_i32_le_into(v, Int32(10))
+    _write_i32_le_into(v, Int32(20))
+    var col = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v)
+    var cols = List[ArrowArray]()
+    cols.append(col.copy())
+    var batch = RecordBatch(Int64(2), cols)
+    var batches = List[RecordBatch]()
+    batches.append(batch.copy())
+
+    var file_bytes = encode_arrow_file(schema, batches)
+    var n = len(file_bytes)
+
+    # Locate and parse the Footer (mirrors decode_arrow_file's own approach).
+    var footer_size = Int(read_i32_le(file_bytes, n - 10))
+    var footer_start = n - 10 - footer_size
+    var footer_bytes = List[UInt8](capacity=footer_size)
+    for i in range(footer_size):
+        footer_bytes.append(file_bytes[footer_start + i])
+    var r = FlatBuffersReader(footer_bytes)
+    var footer_tp = r.root()
+    var rb_vec = r.read_vector(footer_tp, 3)  # recordBatches
+    assert_eq_int(Int(r.vector_len(rb_vec)), 1, "one recordBatches block")
+    var blk = r.vec_struct_bytes(rb_vec, UInt32(0), 24)
+
+    # Block struct layout: [offset:i64][metaDataLength:i32][pad:i32][bodyLength:i64]
+    var blk_offset = Int(read_i64_le(blk, 0))
+    var blk_meta_len = Int(read_i32_le(blk, 8))
+    var blk_body_len = Int(read_i64_le(blk, 16))
+
+    # Cross-check against the RecordBatch message's OWN embedded bodyLength,
+    # parsed independently at the offset the Block itself points to -- this
+    # is exactly the check a real Arrow reader performs.
+    var msg_result = decode_ipc_message(file_bytes, blk_offset)
+    var real_body_len = len(msg_result[1])
+
+    assert_eq_int(blk_body_len, real_body_len, "Block.bodyLength must match the real message body length")
+    assert_true(blk_body_len > 0, "a 2-row Int32 column must have a nonzero body")
+    assert_true(blk_meta_len > 0, "metaDataLength must be nonzero")
+    assert_true(blk_meta_len < blk_body_len + 200, "metaDataLength must be the header size, not the whole message")
+
+
 def test_arrow_file_multi_batch() raises:
     """Two RecordBatches: order and values preserved."""
     var schema = _make_simple_schema()
@@ -1254,6 +1312,7 @@ def main() raises:
     run_test[test_arrow_file_schema_roundtrip]("test_arrow_file_schema_roundtrip", passed, failed)
     run_test[test_arrow_file_zero_batches]("test_arrow_file_zero_batches", passed, failed)
     run_test[test_arrow_file_single_batch]("test_arrow_file_single_batch", passed, failed)
+    run_test[test_arrow_file_block_body_length_matches_real_message]("test_arrow_file_block_body_length_matches_real_message", passed, failed)
     run_test[test_arrow_file_multi_batch]("test_arrow_file_multi_batch", passed, failed)
     run_test[test_decode_arrow_file_wrong_magic]("test_decode_arrow_file_wrong_magic", passed, failed)
 
