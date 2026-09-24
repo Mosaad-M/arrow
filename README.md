@@ -41,7 +41,29 @@ pixi run csv-to-feather /tmp/test.csv /tmp/test.feather
 python3 -c "import pyarrow.feather as f; print(f.read_table('/tmp/test.feather'))"
 ```
 
-## Usage
+**Known limitations (real pyarrow interop, verified directly, not assumed)**:
+
+- The `pixi run csv-to-feather` task above currently errors with
+  `mojo: error: module does not define a 'main' function` —
+  `csv_arrow.mojo` has no `main()`, so the quickstart as written doesn't
+  run as-is. Call `csv_to_feather(csv_path, feather_path)` from a small
+  Mojo script instead, or see `test_csv_arrow.mojo`'s
+  `test_csv_to_feather_file` for a working call site. Not fixed here —
+  pre-existing, unrelated to the magic-bytes fix below.
+- As of v1.1.1, `encode_arrow_file`'s header/trailer magic bytes are
+  spec-correct (8-byte padded header, 6-byte unpadded trailer — previous
+  versions wrote 8 bytes for both, which real Arrow readers reject
+  outright with `ArrowInvalid: Not an Arrow file`). **Fixing the magic
+  bytes is necessary but not yet sufficient for real pyarrow interop**:
+  with the magic fixed, `pyarrow.feather.read_table` now gets past the
+  magic check and fails differently, with `OSError: Verification of
+  flatbuffer-encoded Footer failed.` This is a separate, deeper bug in the
+  Footer FlatBuffer encoding itself (this repo's own `FlatBuffersReader`
+  is lenient enough to parse it — hence every self-roundtrip test in this
+  repo passing — but Arrow C++'s stricter flatbuffer verifier rejects it).
+  It was invisible until now because the magic-byte bug always made
+  pyarrow fail before ever reaching footer verification. Not root-caused
+  or fixed here — flagged as the next real blocker to real-world interop.
 
 ### Arrow IPC (schema + record batches)
 

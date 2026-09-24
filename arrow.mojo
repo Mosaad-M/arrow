@@ -1110,7 +1110,7 @@ def encode_arrow_file(
       ...
       [Footer FlatBuffer]
       [footer_size: i32 LE, 4 bytes]
-      [magic: 8]
+      [magic: 6]  (unpadded trailing magic, NOT the same 8-byte header magic)
     """
     var out = List[UInt8]()
 
@@ -1203,7 +1203,10 @@ def encode_arrow_file(
     write_i32_le(out, len(out) - 4, footer_size)
 
     # ── Trailer magic ─────────────────────────────────────────────────────────
-    for i in range(8):
+    # Per the Arrow IPC File Format spec, the trailing magic is exactly 6
+    # bytes ("ARROW1", unpadded) — unlike the leading magic, which is 8
+    # bytes padded for alignment. Do not reuse the full 8-byte `magic` here.
+    for i in range(6):
         out.append(magic[i])
 
     return out^
@@ -1217,7 +1220,7 @@ def decode_arrow_file(
     Returns (schema, batches).
     Raises on wrong magic, truncated file, or malformed data.
     """
-    if len(buf) < 20:
+    if len(buf) < 18:
         raise Error("arrow: decode_arrow_file: file too short")
 
     # ── Verify header magic ───────────────────────────────────────────────────
@@ -1227,17 +1230,20 @@ def decode_arrow_file(
             raise Error("arrow: decode_arrow_file: invalid magic bytes")
 
     # ── Verify trailer magic ──────────────────────────────────────────────────
+    # The trailer is exactly 6 bytes ("ARROW1", unpadded), unlike the 8-byte
+    # padded header magic — see encode_arrow_file's layout comment.
     var n = len(buf)
-    for i in range(8):
-        if buf[n - 8 + i] != magic[i]:
+    for i in range(6):
+        if buf[n - 6 + i] != magic[i]:
             raise Error("arrow: decode_arrow_file: invalid trailing magic bytes")
 
     # ── Read footer_size ──────────────────────────────────────────────────────
-    var footer_size_i32 = read_i32_le(buf, n - 12)
+    # Layout from the end: [footer bytes][footer_size: i32, 4 bytes][magic: 6 bytes]
+    var footer_size_i32 = read_i32_le(buf, n - 10)
     if footer_size_i32 <= Int32(0):
         raise Error("arrow: decode_arrow_file: invalid footer_size")
     var footer_size = Int(footer_size_i32)
-    var footer_start = n - 12 - footer_size
+    var footer_start = n - 10 - footer_size
     if footer_start < 8:
         raise Error("arrow: decode_arrow_file: footer out of bounds")
 

@@ -986,31 +986,33 @@ def test_arrow_file_magic_prefix() raises:
 
 
 def test_arrow_file_magic_suffix() raises:
-    """Last 8 bytes of the encoded file are ARROW1\\0\\0."""
+    """Last 6 bytes of the encoded file are the unpadded trailing magic
+    ARROW1 (no trailing \\0\\0) per the Arrow IPC File Format spec — the
+    header magic is 8 bytes (padded), the trailer is exactly 6."""
     var schema = _make_simple_schema()
     var batches = List[RecordBatch]()
     var file_bytes = encode_arrow_file(schema, batches)
     _ = len(file_bytes)
     var magic = _arrow_magic()
     var n = len(file_bytes)
-    assert_true(n >= 8, "file at least 8 bytes")
-    for i in range(8):
-        assert_eq_u8(file_bytes[n - 8 + i], magic[i], "magic suffix byte " + String(i))
+    assert_true(n >= 6, "file at least 6 bytes")
+    for i in range(6):
+        assert_eq_u8(file_bytes[n - 6 + i], magic[i], "trailer magic byte " + String(i))
 
 
 def test_arrow_file_footer_size() raises:
-    """Int32 at offset len-12 matches the actual footer byte count."""
+    """Int32 at offset len-10 matches the actual footer byte count."""
     var schema = _make_simple_schema()
     var batches = List[RecordBatch]()
     var file_bytes = encode_arrow_file(schema, batches)
     _ = len(file_bytes)
     var n = len(file_bytes)
-    # Layout: ... [footer bytes] [footer_size: i32, 4 bytes] [magic: 8 bytes]
-    assert_true(n >= 12, "file at least 12 bytes")
-    var footer_size = read_i32_le(file_bytes, n - 12)
+    # Layout: ... [footer bytes] [footer_size: i32, 4 bytes] [magic: 6 bytes]
+    assert_true(n >= 10, "file at least 10 bytes")
+    var footer_size = read_i32_le(file_bytes, n - 10)
     assert_true(footer_size > 0, "footer_size > 0")
-    # footer sits immediately before the last 12 bytes
-    assert_true(n - 12 - Int(footer_size) >= 0, "footer fits in file")
+    # footer sits immediately before the last 10 bytes
+    assert_true(n - 10 - Int(footer_size) >= 0, "footer fits in file")
 
 
 def test_arrow_file_schema_roundtrip() raises:
