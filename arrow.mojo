@@ -731,28 +731,22 @@ struct ArrowArray(Copyable, Movable):
         self.length = length
         self.null_count = null_count
         self.validity = List[UInt8]()
-        for i in range(len(validity)):
-            self.validity.append(validity[i])
+        self.validity.extend(validity.copy())
         self.offsets = List[UInt8]()
-        for i in range(len(offsets)):
-            self.offsets.append(offsets[i])
+        self.offsets.extend(offsets.copy())
         self.values = List[UInt8]()
-        for i in range(len(values)):
-            self.values.append(values[i])
+        self.values.extend(values.copy())
 
     def __copyinit__(out self, copy: Self):
         self.type = copy.type.copy()
         self.length = copy.length
         self.null_count = copy.null_count
         self.validity = List[UInt8]()
-        for i in range(len(copy.validity)):
-            self.validity.append(copy.validity[i])
+        self.validity.extend(copy.validity.copy())
         self.offsets = List[UInt8]()
-        for i in range(len(copy.offsets)):
-            self.offsets.append(copy.offsets[i])
+        self.offsets.extend(copy.offsets.copy())
         self.values = List[UInt8]()
-        for i in range(len(copy.values)):
-            self.values.append(copy.values[i])
+        self.values.extend(copy.values.copy())
 
     def __moveinit__(out self, deinit take: Self):
         self.type = take.type^
@@ -797,8 +791,7 @@ def encode_array(
     if arr.null_count > 0:
         var vlen = len(arr.validity)
         descs.append(BufferDesc(Int64(cur), Int64(vlen)))
-        for i in range(vlen):
-            body.append(arr.validity[i])
+        body.extend(arr.validity.copy())
         var vpad = ipc_pad8(vlen) - vlen
         for _ in range(vpad):
             body.append(UInt8(0))
@@ -811,8 +804,7 @@ def encode_array(
     if arr.type.tag == TYPE_UTF8() or arr.type.tag == TYPE_BINARY():
         var olen = len(arr.offsets)
         descs.append(BufferDesc(Int64(cur), Int64(olen)))
-        for i in range(olen):
-            body.append(arr.offsets[i])
+        body.extend(arr.offsets.copy())
         var opad = ipc_pad8(olen) - olen
         for _ in range(opad):
             body.append(UInt8(0))
@@ -821,8 +813,7 @@ def encode_array(
     # ── Values ───────────────────────────────────────────────────────────────
     var dlen = len(arr.values)
     descs.append(BufferDesc(Int64(cur), Int64(dlen)))
-    for i in range(dlen):
-        body.append(arr.values[i])
+    body.extend(arr.values.copy())
     var dpad = ipc_pad8(dlen) - dlen
     for _ in range(dpad):
         body.append(UInt8(0))
@@ -865,8 +856,7 @@ def decode_array(
         var end   = start + Int(descs[0].length)
         if end > len(body):
             raise Error("arrow: decode_array: validity buffer out of bounds")
-        for i in range(start, end):
-            validity.append(body[i])
+        validity.extend(body[start:end].copy())
 
     # ── Offsets + values (Utf8 / Binary) or just values (all other types) ────
     if type.tag == TYPE_UTF8() or type.tag == TYPE_BINARY():
@@ -880,14 +870,12 @@ def decode_array(
         var oend   = ostart + Int(descs[1].length)
         if oend > len(body):
             raise Error("arrow: decode_array: offsets buffer out of bounds")
-        for i in range(ostart, oend):
-            offsets.append(body[i])
+        offsets.extend(body[ostart:oend].copy())
         var vstart = Int(descs[2].offset)
         var vend   = vstart + Int(descs[2].length)
         if vend > len(body):
             raise Error("arrow: decode_array: values buffer out of bounds")
-        for i in range(vstart, vend):
-            values.append(body[i])
+        values.extend(body[vstart:vend].copy())
     else:
         if len(descs) < 2:
             raise Error("arrow: decode_array: expected 2 buffer descriptors for fixed-width type")
@@ -897,8 +885,7 @@ def decode_array(
         var vend   = vstart + Int(descs[1].length)
         if vend > len(body):
             raise Error("arrow: decode_array: values buffer out of bounds")
-        for i in range(vstart, vend):
-            values.append(body[i])
+        values.extend(body[vstart:vend].copy())
 
     return ArrowArray(
         type, Int(node.length), Int(node.null_count),
@@ -938,8 +925,7 @@ def encode_record_batch(
         nodes.append(col_node^)
         for j in range(len(col_descs)):
             all_buffers.append(col_descs[j].copy())
-        for j in range(len(col_body)):
-            full_body.append(col_body[j])
+        full_body.extend(col_body.copy())
         # S-P5-2: guard against cur_offset overflow in large multi-column batches
         if len(col_body) > _max_ipc_msg() - cur_offset:
             raise Error("arrow: encode_record_batch: combined column body exceeds 1 GB")
