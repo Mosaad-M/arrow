@@ -41,29 +41,44 @@ pixi run csv-to-feather /tmp/test.csv /tmp/test.feather
 python3 -c "import pyarrow.feather as f; print(f.read_table('/tmp/test.feather'))"
 ```
 
-**Known limitations (real pyarrow interop, verified directly, not assumed)**:
+**Real pyarrow interop: verified working end-to-end.** A real
+`pyarrow.feather.read_table()` call against a file written by this repo's
+`encode_arrow_file` now succeeds and returns correct data — confirmed
+directly, not just via this repo's own self-roundtrip tests. Getting here
+took three separate, real bugs, each only visible once the previous one
+was fixed:
 
-- The `pixi run csv-to-feather` task above currently errors with
-  `mojo: error: module does not define a 'main' function` —
-  `csv_arrow.mojo` has no `main()`, so the quickstart as written doesn't
-  run as-is. Call `csv_to_feather(csv_path, feather_path)` from a small
-  Mojo script instead, or see `test_csv_arrow.mojo`'s
-  `test_csv_to_feather_file` for a working call site. Not fixed here —
-  pre-existing, unrelated to the magic-bytes fix below.
-- As of v1.1.1, `encode_arrow_file`'s header/trailer magic bytes are
-  spec-correct (8-byte padded header, 6-byte unpadded trailer — previous
-  versions wrote 8 bytes for both, which real Arrow readers reject
-  outright with `ArrowInvalid: Not an Arrow file`). **Fixing the magic
-  bytes is necessary but not yet sufficient for real pyarrow interop**:
-  with the magic fixed, `pyarrow.feather.read_table` now gets past the
-  magic check and fails differently, with `OSError: Verification of
-  flatbuffer-encoded Footer failed.` This is a separate, deeper bug in the
-  Footer FlatBuffer encoding itself (this repo's own `FlatBuffersReader`
-  is lenient enough to parse it — hence every self-roundtrip test in this
-  repo passing — but Arrow C++'s stricter flatbuffer verifier rejects it).
-  It was invisible until now because the magic-byte bug always made
-  pyarrow fail before ever reaching footer verification. Not root-caused
-  or fixed here — flagged as the next real blocker to real-world interop.
+1. **Magic bytes** (fixed): `encode_arrow_file`'s header/trailer magic
+   are now spec-correct (8-byte padded header, 6-byte unpadded trailer —
+   older versions wrote 8 bytes for both, which real Arrow readers reject
+   outright with `ArrowInvalid: Not an Arrow file`).
+2. **Footer FlatBuffer verification** (fixed, in the `flatbuffers`
+   dependency, `>=1.1.1`): the writer and reader agreed with each other on
+   an inverted `soffset` sign convention, which every self-roundtrip test
+   in both repos passed while real Arrow C++'s stricter FlatBuffers
+   verifier rejected it (`OSError: Verification of flatbuffer-encoded
+   Footer failed.`). Fixed at the source; see that repo's `v1.1.1` release
+   notes.
+3. **RecordBatch body/meta length in the Footer's Block entries** (fixed):
+   these were computed from an internal helper's return value that
+   already pointed past the body, producing `bodyLength: 0` regardless of
+   the batch's real size. This repo's own `decode_arrow_file` never
+   noticed, since it re-derives batch boundaries by parsing each message
+   directly rather than trusting these fields — but real Arrow does trust
+   and cross-check them (`ArrowInvalid: Mismatching body length for IPC
+   message`).
+
+Each fix has a regression test that checks the actual external invariant
+that was violated, not just this repo's own self-consistency — that
+distinction is exactly why these three bugs went unnoticed for as long as
+they did.
+
+**Still not fixed**: the `pixi run csv-to-feather` task above errors with
+`mojo: error: module does not define a 'main' function` — `csv_arrow.mojo`
+has no `main()`, so the quickstart as written doesn't run as-is. Call
+`csv_to_feather(csv_path, feather_path)` from a small Mojo script instead,
+or see `test_csv_arrow.mojo`'s `test_csv_to_feather_file` for a working
+call site. Unrelated to the interop fixes above, not fixed here.
 
 ### Arrow IPC (schema + record batches)
 
