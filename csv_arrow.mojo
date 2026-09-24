@@ -1,4 +1,5 @@
 from std.pathlib import Path
+from std.sys import argv
 from arrow import (
     ArrowType, ArrowField, ArrowSchema, ArrowArray, RecordBatch,
     encode_arrow_file, decode_arrow_file,
@@ -369,3 +370,19 @@ def feather_to_csv(feather_path: String, csv_path: String) raises:
             out += "\n"
 
     Path(csv_path).write_text(out)
+
+
+# ============================================================================
+# CLI entry point — `pixi run csv-to-feather <input.csv> <output.feather>`
+# ============================================================================
+
+
+def main() raises:
+    var args = argv()
+    if len(args) < 3:
+        print("Usage: csv_arrow.mojo <input.csv> <output.feather>")
+        return
+    var csv_path = String(args[1])
+    var feather_path = String(args[2])
+    csv_to_feather(csv_path, feather_path)
+    print("Wrote", feather_path)

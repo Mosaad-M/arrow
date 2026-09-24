@@ -73,12 +73,9 @@ that was violated, not just this repo's own self-consistency — that
 distinction is exactly why these three bugs went unnoticed for as long as
 they did.
 
-**Still not fixed**: the `pixi run csv-to-feather` task above errors with
-`mojo: error: module does not define a 'main' function` — `csv_arrow.mojo`
-has no `main()`, so the quickstart as written doesn't run as-is. Call
-`csv_to_feather(csv_path, feather_path)` from a small Mojo script instead,
-or see `test_csv_arrow.mojo`'s `test_csv_to_feather_file` for a working
-call site. Unrelated to the interop fixes above, not fixed here.
+The `pixi run csv-to-feather <input.csv> <output.feather>` quickstart
+above now runs as written — `csv_arrow.mojo` has a `main()` entry point
+and the pixi task forwards its arguments through.
 
 ### Arrow IPC (schema + record batches)
 
