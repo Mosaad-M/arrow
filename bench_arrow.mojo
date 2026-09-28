@@ -15,6 +15,7 @@ from arrow import (
     RecordBatch,
     encode_record_batch,
     decode_record_batch,
+    encode_arrow_file,
 )
 
 
@@ -269,6 +270,32 @@ def bench_decode_record_batch_100k_rows() raises:
     bench("bench_decode_record_batch_100k_rows (3 cols)", elapsed, iters)
 
 
+# ============================================================================
+# encode_arrow_file at realistic scale — exercises the full file-assembly
+# path (schema message + record batch message + Footer), not just
+# encode_record_batch in isolation. This is what actually caught the
+# byte-by-byte `out.append(rb_msg[i])` loop in encode_arrow_file: the
+# encode_record_batch-only benchmark above never touches that code path.
+# ============================================================================
+
+
+def bench_encode_arrow_file_100k_rows() raises:
+    var n_rows = 100_000
+    var built = _build_bench_batch(n_rows)
+    var schema = built[0].copy()
+    var batch = built[1].copy()
+    var batches = List[RecordBatch]()
+    batches.append(batch^)
+
+    var iters = 10
+    var t0 = perf_counter_ns()
+    for _ in range(iters):
+        var file_bytes = encode_arrow_file(schema, batches)
+        _ = len(file_bytes)
+    var elapsed = perf_counter_ns() - t0
+    bench("bench_encode_arrow_file_100k_rows (3 cols)", elapsed, iters)
+
+
 def main() raises:
     print("=== arrow benchmarks ===")
     bench_ipc_pad8()
@@ -282,4 +309,5 @@ def main() raises:
     bench_decode_schema_10fields()
     bench_encode_record_batch_100k_rows()
     bench_decode_record_batch_100k_rows()
+    bench_encode_arrow_file_100k_rows()
     print("done")

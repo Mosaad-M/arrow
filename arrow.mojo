@@ -1125,7 +1125,6 @@ def encode_arrow_file(
             arrays.append(batch.columns[c].copy())
 
         var rb_msg = encode_record_batch(schema, arrays)
-        var rb_msg_len = len(rb_msg)
 
         # decode_ipc_message's 3rd return value (next_pos) is the position
         # PAST the body (= padded_header_end + ipc_pad8(body_len)), not the
@@ -1154,8 +1153,7 @@ def encode_arrow_file(
             rb_blocks_bytes.append(blk[i])
         n_blocks += 1
 
-        for i in range(rb_msg_len):
-            out.append(rb_msg[i])
+        out.extend(rb_msg.copy())
 
         _ = rb_meta
 
