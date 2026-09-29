@@ -88,16 +88,14 @@ def encode_ipc_message(metadata: List[UInt8], body: List[UInt8]) raises -> List[
     write_i32_le(out, 4, Int32(meta_len))
 
     # Metadata bytes
-    for i in range(meta_len):
-        out.append(metadata[i])
+    out.extend(metadata.copy())
 
     # Padding after metadata
     for _ in range(meta_pad):
         out.append(UInt8(0))
 
     # Body bytes
-    for i in range(body_len):
-        out.append(body[i])
+    out.extend(body.copy())
 
     # Padding after body
     for _ in range(body_pad):
@@ -139,8 +137,7 @@ def decode_ipc_message(buf: List[UInt8], pos: Int) raises -> Tuple[List[UInt8], 
         raise Error("arrow: padded metadata exceeds buffer")
 
     var metadata = List[UInt8](capacity=meta_len)
-    for i in range(meta_len):
-        metadata.append(buf[pos + 8 + i])
+    metadata.extend(buf[pos + 8 : pos + 8 + meta_len])
 
     # Read bodyLength from the FlatBuffers Message table (slot 3, i64).
     # Schema messages have bodyLength=0; RecordBatch messages have the actual body size.
@@ -155,8 +152,7 @@ def decode_ipc_message(buf: List[UInt8], pos: Int) raises -> Tuple[List[UInt8], 
         if body_len > len(buf) - padded_header_end:
             raise Error("arrow: body truncated")
         body = List[UInt8](capacity=body_len)
-        for i in range(body_len):
-            body.append(buf[padded_header_end + i])
+        body.extend(buf[padded_header_end : padded_header_end + body_len])
     var padded_body_end = padded_header_end + ipc_pad8(body_len)
     return Tuple[List[UInt8], List[UInt8], Int](metadata^, body^, padded_body_end)
 
