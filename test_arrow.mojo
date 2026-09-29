@@ -19,6 +19,9 @@ from arrow import (
     ArrowArray,
     encode_array,
     decode_array,
+    encode_list_utf8_array,
+    decode_list_utf8_array,
+    TYPE_LIST,
     encode_record_batch,
     decode_record_batch,
     RecordBatch,
@@ -62,6 +65,12 @@ def assert_eq_u32(actual: UInt32, expected: UInt32, msg: String = "") raises:
 def assert_eq_i32(actual: Int32, expected: Int32, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
+        raise Error(msg + ": " + m if msg.byte_length() > 0 else m)
+
+
+def assert_eq_str(actual: String, expected: String, msg: String = "") raises:
+    if actual != expected:
+        var m = "expected '" + expected + "' got '" + actual + "'"
         raise Error(msg + ": " + m if msg.byte_length() > 0 else m)
 
 
@@ -950,6 +959,148 @@ def test_record_batch_null_values_preserved() raises:
 
 
 # ============================================================================
+# List<Utf8>: narrow support for one repeating-string column (not a
+# general nested-list-of-any-type system -- see ArrowArray.list_utf8).
+# ============================================================================
+
+
+def _make_list_utf8_array() -> ArrowArray:
+    """3 rows: row0 = ["MRN1", "SSN1"] (2 elements), row1 = [] (empty list,
+    not null), row2 = null (the list itself is null). Exercises all three
+    cases a real List column has to distinguish: present-with-values,
+    present-but-empty, and absent."""
+    var validity = List[UInt8]()
+    validity.append(UInt8(0b00000011))  # row0=1, row1=1, row2=0 (null)
+    var offsets = List[UInt8]()
+    _write_i32_le_into(offsets, Int32(0))
+    _write_i32_le_into(offsets, Int32(2))
+    _write_i32_le_into(offsets, Int32(2))
+    _write_i32_le_into(offsets, Int32(2))
+
+    var child_offsets = List[UInt8]()
+    _write_i32_le_into(child_offsets, Int32(0))
+    _write_i32_le_into(child_offsets, Int32(4))
+    _write_i32_le_into(child_offsets, Int32(8))
+    var child_values = List[UInt8]()
+    var s = String("MRN1SSN1")
+    var sb = s.as_bytes()
+    for i in range(len(sb)):
+        child_values.append(sb[i])
+
+    return ArrowArray.list_utf8(
+        3, 1, validity, offsets,
+        2, 0, List[UInt8](), child_offsets, child_values,
+    )
+
+
+def test_encode_decode_list_utf8_array_roundtrip() raises:
+    """encode_list_utf8_array / decode_list_utf8_array directly, in
+    isolation from encode_record_batch."""
+    var arr = _make_list_utf8_array()
+
+    var result = encode_list_utf8_array(arr, 0)
+    var nodes = result[0].copy()
+    var descs = result[1].copy()
+    var body = result[2].copy()
+    _ = len(body)
+
+    assert_eq_int(len(nodes), 2, "2 FieldNodes (list + child)")
+    assert_true(nodes[0].length == Int64(3), "list node length=3")
+    assert_true(nodes[0].null_count == Int64(1), "list node null_count=1")
+    assert_true(nodes[1].length == Int64(2), "child node length=2")
+    assert_true(nodes[1].null_count == Int64(0), "child node null_count=0")
+    assert_eq_int(len(descs), 5, "5 buffer descs (list validity/offsets, child validity/offsets/values)")
+
+    var decoded = decode_list_utf8_array(nodes, descs, body)
+    assert_eq_int(decoded.length, 3, "decoded list length=3")
+    assert_true(decoded.null_count == 1, "decoded list null_count=1")
+    assert_eq_int(decoded.child_length, 2, "decoded child_length=2")
+    var off1 = _read_i32_from(decoded.offsets, 4)
+    var off2 = _read_i32_from(decoded.offsets, 8)
+    assert_true(off1 == Int32(2), "row0 has 2 elements (offset[1]=2)")
+    assert_true(off2 == Int32(2), "row1 is an empty list (offset[2]=2, same as offset[1])")
+    var s0 = String(unsafe_from_utf8=decoded.child_values[0:4])
+    var s1 = String(unsafe_from_utf8=decoded.child_values[4:8])
+    assert_eq_str(s0, "MRN1", "child element 0")
+    assert_eq_str(s1, "SSN1", "child element 1")
+
+
+def test_record_batch_with_mixed_list_and_scalar_columns() raises:
+    """A schema with a plain Utf8 column AND a List<Utf8> column together
+    -- the real shape hl7-arrow needs (patient_id scalar + patient_ids
+    list in the same PatientColumns RecordBatch). Confirms
+    encode_record_batch/decode_record_batch correctly interleave a
+    2-node column among 1-node columns, not just a List column alone."""
+    var name_offsets = List[UInt8]()
+    _write_i32_le_into(name_offsets, Int32(0))
+    _write_i32_le_into(name_offsets, Int32(5))
+    _write_i32_le_into(name_offsets, Int32(5))
+    _write_i32_le_into(name_offsets, Int32(10))
+    var name_values = List[UInt8]()
+    var ns = String("AliceBob")
+    var nsb = ns.as_bytes()
+    for i in range(len(nsb)):
+        name_values.append(nsb[i])
+    # row1's name is null: validity bit1=0
+    var name_validity = List[UInt8]()
+    name_validity.append(UInt8(0b00000101))
+    var name_col = ArrowArray(
+        ArrowType.utf8(), 3, 1, name_validity, name_offsets, name_values
+    )
+
+    var ids_col = _make_list_utf8_array()
+
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("name", ArrowType.utf8(), True))
+    fields.append(ArrowField("patient_ids", ArrowType.list_utf8(), True))
+    var schema = ArrowSchema(fields, Int16(0))
+
+    var arrays = List[ArrowArray]()
+    arrays.append(name_col.copy())
+    arrays.append(ids_col.copy())
+
+    var buf = encode_record_batch(schema, arrays)
+    var result = decode_record_batch(buf, 0, schema)
+    var decoded = result[0].copy()
+
+    assert_eq_int(len(decoded), 2, "2 decoded columns")
+    assert_eq_int(decoded[0].length, 3, "name column length=3")
+    assert_true(decoded[0].type.tag == TYPE_UTF8(), "column 0 is Utf8")
+    assert_true(decoded[1].type.tag == TYPE_LIST(), "column 1 is List")
+    assert_eq_int(decoded[1].length, 3, "patient_ids column length=3")
+    assert_true(decoded[1].null_count == 1, "patient_ids null_count=1")
+    assert_eq_int(decoded[1].child_length, 2, "patient_ids child_length=2")
+
+
+def test_arrow_file_roundtrip_with_list_utf8_column() raises:
+    """Full encode_arrow_file / decode_arrow_file round-trip with a
+    List<Utf8> column -- the actual end-to-end path hl7-arrow uses via
+    .feather files, not just the RecordBatch-level API."""
+    var ids_col = _make_list_utf8_array()
+
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("patient_ids", ArrowType.list_utf8(), True))
+    var schema = ArrowSchema(fields, Int16(0))
+
+    var arrays = List[ArrowArray]()
+    arrays.append(ids_col.copy())
+    var batch = RecordBatch(Int64(3), arrays)
+    var batches = List[RecordBatch]()
+    batches.append(batch.copy())
+
+    var file_bytes = encode_arrow_file(schema, batches)
+    var result = decode_arrow_file(file_bytes)
+    var decoded_batches = result[1].copy()
+    assert_eq_int(len(decoded_batches), 1, "1 decoded batch")
+    var decoded_col = decoded_batches[0].columns[0].copy()
+    assert_eq_int(decoded_col.length, 3, "decoded patient_ids length=3")
+    assert_true(decoded_col.null_count == 1, "decoded patient_ids null_count=1")
+    assert_eq_int(decoded_col.child_length, 2, "decoded child_length=2")
+    var s0 = String(unsafe_from_utf8=decoded_col.child_values[0:4])
+    assert_eq_str(s0, "MRN1", "decoded child element 0")
+
+
+# ============================================================================
 # Phase 6 — IPC File Format (Feather v2)
 # ============================================================================
 
@@ -1304,6 +1455,11 @@ def main() raises:
     # Phase 5 security adversarial tests
     run_test[test_adversarial_decode_array_negative_offset]("test_adversarial_decode_array_negative_offset", passed, failed)
     run_test[test_adversarial_decode_array_negative_length]("test_adversarial_decode_array_negative_length", passed, failed)
+
+    # List<Utf8>
+    run_test[test_encode_decode_list_utf8_array_roundtrip]("test_encode_decode_list_utf8_array_roundtrip", passed, failed)
+    run_test[test_record_batch_with_mixed_list_and_scalar_columns]("test_record_batch_with_mixed_list_and_scalar_columns", passed, failed)
+    run_test[test_arrow_file_roundtrip_with_list_utf8_column]("test_arrow_file_roundtrip_with_list_utf8_column", passed, failed)
 
     # Phase 6 — IPC File Format (Feather v2)
     run_test[test_arrow_file_magic_prefix]("test_arrow_file_magic_prefix", passed, failed)

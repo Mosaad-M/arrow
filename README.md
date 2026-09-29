@@ -7,7 +7,11 @@ formats.  No C dependencies, no FFI — just Mojo.
 
 - **IPC framing** — encode/decode Arrow IPC messages (continuation marker,
   metadata, body, end-of-stream)
-- **Arrow types** — Null, Int8/16/32/64, Float32/64, Bool, Utf8, Binary
+- **Arrow types**: Null, Int8/16/32/64, Float32/64, Bool, Utf8, Binary,
+  List\<Utf8\> (a real Arrow `List` column of strings -- scoped to a
+  Utf8 child only, not a general nested-list-of-any-type; distinguishes
+  present-with-values, present-but-empty, and null list rows, verified
+  directly against real `pyarrow.feather.read_table()`)
 - **Schema messages** — encode/decode Arrow Schema IPC messages (field names,
   types, nullability, endianness)
 - **RecordBatch messages** — encode/decode RecordBatch IPC messages (FieldNode
@@ -25,7 +29,7 @@ formats.  No C dependencies, no FFI — just Mojo.
 
 ```bash
 pixi install                        # install dependencies (flatbuffers 1.0.2)
-pixi run test-arrow                 # 59 Arrow IPC tests
+pixi run test-arrow                 # 63 Arrow IPC tests
 pixi run test-csv-arrow             # 7 CSV converter tests
 ```
 

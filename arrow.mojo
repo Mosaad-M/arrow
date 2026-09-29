@@ -197,6 +197,13 @@ def TYPE_UTF8() -> UInt8:
 def TYPE_BOOL() -> UInt8:
     return UInt8(6)
 
+def TYPE_LIST() -> UInt8:
+    """Real Arrow Type union tag 12 (List) -- matches upstream numbering
+    exactly (7-11 are Decimal/Date/Time/Timestamp/Interval, unsupported
+    here), not an arbitrary local choice, since real pyarrow interop
+    depends on this matching the actual Arrow IPC spec."""
+    return UInt8(12)
+
 
 struct ArrowInt(Copyable, Movable):
     """Metadata for Int Arrow type."""
@@ -284,15 +291,28 @@ struct ArrowType(Copyable, Movable):
     def bool_() -> ArrowType:
         return ArrowType(TYPE_BOOL(), 0, False, 0)
 
+    @staticmethod
+    def list_utf8() -> ArrowType:
+        """List<Utf8> only -- not a general nested-list-of-any-type. The
+        List type's own FlatBuffer table carries no scalar metadata in
+        the Arrow IPC spec (the child's type lives in the Field's
+        children vector, written by encode_schema_message), so this
+        reuses the same empty-table encoding every other non-Int/Float
+        type already gets."""
+        return ArrowType(TYPE_LIST(), 0, False, 0)
+
 
 def encode_arrow_type(mut b: FlatBufferBuilder, t: ArrowType) raises -> Tuple[UInt8, UInt32]:
     """
     Builds the type table in b and returns (discriminant, table_offset).
     Build order: type table must be built before the Field table that references it.
     """
-    # S5: validate tag before encoding to prevent silent type confusion
+    # S5: validate tag before encoding to prevent silent type confusion.
+    # TYPE_LIST() (12) is allowed as a specific extra value, not by widening
+    # the contiguous range, since 7-11 (Decimal/Date/Time/Timestamp/Interval)
+    # are still genuinely unsupported.
     var disc = t.tag
-    if disc < TYPE_NULL() or disc > TYPE_BOOL():
+    if (disc < TYPE_NULL() or disc > TYPE_BOOL()) and disc != TYPE_LIST():
         raise Error("arrow: encode_arrow_type: unknown type tag: " + String(disc))
 
     # P1: locals eliminate repeated function calls in comparisons
@@ -326,6 +346,7 @@ def decode_arrow_type(r: FlatBuffersReader, discriminant: UInt8, type_tp: UInt32
     var T_BIN   = UInt8(4)
     var T_UTF8  = UInt8(5)
     var T_BOOL  = UInt8(6)
+    var T_LIST  = TYPE_LIST()
 
     if discriminant == T_NULL:
         return ArrowType.null()
@@ -342,6 +363,12 @@ def decode_arrow_type(r: FlatBuffersReader, discriminant: UInt8, type_tp: UInt32
         return ArrowType.utf8()
     elif discriminant == T_BOOL:
         return ArrowType.bool_()
+    elif discriminant == T_LIST:
+        # Scoped to List<Utf8> only: the child's actual type isn't read
+        # back from the Field's children vector here, since this project
+        # only ever produces/expects a Utf8 child -- the type is implied
+        # by the tag itself, not re-derived from the wire.
+        return ArrowType.list_utf8()
     else:
         raise Error("arrow: unknown type discriminant: " + String(discriminant))
 
@@ -397,6 +424,51 @@ struct ArrowSchema(Copyable, Movable):
         self.endianness = take.endianness
 
 
+def _encode_field(mut b: FlatBufferBuilder, f: ArrowField) raises -> UInt32:
+    """Builds one Field table (with its List<Utf8> synthetic "item" child,
+    if applicable) and returns its offset. Shared by encode_schema_message
+    (the leading Schema message) and _encode_schema_table (the Footer's
+    embedded schema, what real pyarrow actually reads for a Feather v2
+    file) so the two encoders can't silently diverge."""
+    var children_vec_off = UInt32(0)
+    var has_children = False
+    if f.type.tag == TYPE_LIST():
+        var child_type_result = encode_arrow_type(b, ArrowType.utf8())
+        var child_type_disc = child_type_result[0]
+        var child_type_off = child_type_result[1]
+        var child_name_off = b.create_string("item")
+        b.start_table()
+        b.add_field_offset(0, child_name_off)
+        b.add_field_bool(1, True)
+        b.add_field_u8(2, child_type_disc)
+        b.add_field_offset(3, child_type_off)
+        var child_field_off = b.end_table()
+        var child_offs = List[UInt32]()
+        child_offs.append(child_field_off)
+        children_vec_off = b.create_vector_offsets(child_offs)
+        has_children = True
+
+    var type_result = encode_arrow_type(b, f.type)
+    var type_disc = type_result[0]
+    var type_off = type_result[1]
+    var name_off = b.create_string(f.name)
+    b.start_table()
+    b.add_field_offset(0, name_off)
+    b.add_field_bool(1, f.nullable)
+    b.add_field_u8(2, type_disc)
+    b.add_field_offset(3, type_off)
+    # Real Arrow's Field table (Schema.fbs) is: name=0, nullable=1,
+    # type_type=2, type=3, dictionary=4, children=5, custom_metadata=6 --
+    # slot 4 is `dictionary`, NOT `children` (confirmed against a real
+    # pyarrow Footer-verification failure when this was first written at
+    # slot 4: "Verification of flatbuffer-encoded Footer failed", only
+    # fixed once moved to the correct slot 5). No dictionary field is ever
+    # written here, so slot 4 stays legitimately absent.
+    if has_children:
+        b.add_field_offset(5, children_vec_off)
+    return b.end_table()
+
+
 def encode_schema_message(schema: ArrowSchema) raises -> List[UInt8]:
     """
     Encode an ArrowSchema as an IPC Schema message.
@@ -420,24 +492,7 @@ def encode_schema_message(schema: ArrowSchema) raises -> List[UInt8]:
     for i in range(len(schema.fields)):
         # Explicit copy to ensure safe ownership before FlatBuffer mutations
         var f = schema.fields[i].copy()
-
-        # 1. Build type sub-table (must precede start_table for Field)
-        var type_result = encode_arrow_type(b, f.type)
-        var type_disc = type_result[0]
-        var type_off  = type_result[1]
-
-        # 2. Create name string (must precede start_table for Field)
-        var name_off = b.create_string(f.name)
-
-        # 3. Build Field table
-        b.start_table()
-        b.add_field_offset(0, name_off)
-        b.add_field_bool(1, f.nullable)
-        b.add_field_u8(2, type_disc)     # union discriminant
-        b.add_field_offset(3, type_off)  # union value
-        # slot 4 (children) intentionally absent — Phase 3 has no nested types
-        var foff = b.end_table()
-        field_offs.append(foff)
+        field_offs.append(_encode_field(b, f))
 
     # 4. Vector of Field offsets
     var fields_vec_off = b.create_vector_offsets(field_offs)
@@ -718,6 +773,18 @@ struct ArrowArray(Copyable, Movable):
     var offsets: List[UInt8]    # variable-length types: (length+1) * 4 LE bytes
     var values: List[UInt8]     # raw value bytes
 
+    # List<Utf8> only (type.tag == TYPE_LIST()): the child Utf8 array's own
+    # buffers, as flat inline fields rather than a nested ArrowArray --
+    # confirmed against the compiler that a directly self-referential
+    # `List[Self]` struct field is rejected ("field has non-'Deinitable'
+    # type"), so this avoids that recursion entirely. Empty/zero for every
+    # non-List type.
+    var child_length: Int
+    var child_null_count: Int
+    var child_validity: List[UInt8]
+    var child_offsets: List[UInt8]
+    var child_values: List[UInt8]
+
     def __init__(
         out self,
         type: ArrowType,
@@ -726,6 +793,11 @@ struct ArrowArray(Copyable, Movable):
         validity: List[UInt8],
         offsets: List[UInt8],
         values: List[UInt8],
+        child_length: Int = 0,
+        child_null_count: Int = 0,
+        child_validity: List[UInt8] = List[UInt8](),
+        child_offsets: List[UInt8] = List[UInt8](),
+        child_values: List[UInt8] = List[UInt8](),
     ):
         self.type = type.copy()
         self.length = length
@@ -736,6 +808,14 @@ struct ArrowArray(Copyable, Movable):
         self.offsets.extend(offsets.copy())
         self.values = List[UInt8]()
         self.values.extend(values.copy())
+        self.child_length = child_length
+        self.child_null_count = child_null_count
+        self.child_validity = List[UInt8]()
+        self.child_validity.extend(child_validity.copy())
+        self.child_offsets = List[UInt8]()
+        self.child_offsets.extend(child_offsets.copy())
+        self.child_values = List[UInt8]()
+        self.child_values.extend(child_values.copy())
 
     def __copyinit__(out self, copy: Self):
         self.type = copy.type.copy()
@@ -747,6 +827,14 @@ struct ArrowArray(Copyable, Movable):
         self.offsets.extend(copy.offsets.copy())
         self.values = List[UInt8]()
         self.values.extend(copy.values.copy())
+        self.child_length = copy.child_length
+        self.child_null_count = copy.child_null_count
+        self.child_validity = List[UInt8]()
+        self.child_validity.extend(copy.child_validity.copy())
+        self.child_offsets = List[UInt8]()
+        self.child_offsets.extend(copy.child_offsets.copy())
+        self.child_values = List[UInt8]()
+        self.child_values.extend(copy.child_values.copy())
 
     def __moveinit__(out self, deinit take: Self):
         self.type = take.type^
@@ -755,11 +843,41 @@ struct ArrowArray(Copyable, Movable):
         self.validity = take.validity^
         self.offsets = take.offsets^
         self.values = take.values^
+        self.child_length = take.child_length
+        self.child_null_count = take.child_null_count
+        self.child_validity = take.child_validity^
+        self.child_offsets = take.child_offsets^
+        self.child_values = take.child_values^
 
     def copy(self) -> Self:
         return Self(
             self.type, self.length, self.null_count,
             self.validity, self.offsets, self.values,
+            self.child_length, self.child_null_count,
+            self.child_validity, self.child_offsets, self.child_values,
+        )
+
+    @staticmethod
+    def list_utf8(
+        length: Int,
+        null_count: Int,
+        validity: List[UInt8],
+        offsets: List[UInt8],
+        child_length: Int,
+        child_null_count: Int,
+        child_validity: List[UInt8],
+        child_offsets: List[UInt8],
+        child_values: List[UInt8],
+    ) -> ArrowArray:
+        """Convenience constructor for a List<Utf8> column: `offsets` here
+        is the LIST's own offsets buffer (int32, length+1 entries, indexing
+        into the child array's ELEMENTS, not bytes) -- distinct from a
+        plain Utf8 array's offsets, which index into byte content."""
+        return ArrowArray(
+            ArrowType.list_utf8(), length, null_count,
+            validity, offsets, List[UInt8](),
+            child_length, child_null_count,
+            child_validity, child_offsets, child_values,
         )
 
 
@@ -820,6 +938,112 @@ def encode_array(
     _ = cur + ipc_pad8(dlen)   # suppress unused-var warning
 
     return Tuple[FieldNode, List[BufferDesc], List[UInt8]](node^, descs^, body^)
+
+
+def encode_list_utf8_array(
+    arr: ArrowArray, body_offset: Int
+) raises -> Tuple[List[FieldNode], List[BufferDesc], List[UInt8]]:
+    """Encode a List<Utf8> ArrowArray (see ArrowArray.list_utf8) into its
+    two FieldNodes (list, then child) and five BufferDescs (list validity,
+    list offsets, child validity, child offsets, child values) -- the
+    depth-first pre-order layout real Arrow's IPC format uses for nested
+    types. Additive, not a change to encode_array: List<Utf8> is the only
+    nested type this project supports, so it gets its own narrow encoder
+    rather than generalizing encode_array's single-node signature."""
+    if arr.type.tag != TYPE_LIST():
+        raise Error("arrow: encode_list_utf8_array: expected List type")
+
+    var nodes = List[FieldNode]()
+    var descs = List[BufferDesc]()
+    var body = List[UInt8]()
+
+    nodes.append(FieldNode(Int64(arr.length), Int64(arr.null_count)))
+
+    var cur = body_offset
+
+    # ── List's own validity bitmap ────────────────────────────────────────
+    if arr.null_count > 0:
+        var vlen = len(arr.validity)
+        descs.append(BufferDesc(Int64(cur), Int64(vlen)))
+        body.extend(arr.validity.copy())
+        var vpad = ipc_pad8(vlen) - vlen
+        for _ in range(vpad):
+            body.append(UInt8(0))
+        cur += ipc_pad8(vlen)
+    else:
+        descs.append(BufferDesc(Int64(cur), Int64(0)))
+
+    # ── List's own offsets buffer (int32, indexes into child elements) ────
+    var olen = len(arr.offsets)
+    descs.append(BufferDesc(Int64(cur), Int64(olen)))
+    body.extend(arr.offsets.copy())
+    var opad = ipc_pad8(olen) - olen
+    for _ in range(opad):
+        body.append(UInt8(0))
+    cur += ipc_pad8(olen)
+
+    # ── Child Utf8 array: reuse encode_array via a throwaway Utf8 array
+    #    built from the inline child_* fields ─────────────────────────────
+    var child_arr = ArrowArray(
+        ArrowType.utf8(), arr.child_length, arr.child_null_count,
+        arr.child_validity, arr.child_offsets, arr.child_values,
+    )
+    var child_result = encode_array(child_arr, cur)
+    nodes.append(child_result[0].copy())
+    var child_descs = child_result[1].copy()
+    for j in range(len(child_descs)):
+        descs.append(child_descs[j].copy())
+    body.extend(child_result[2].copy())
+
+    return Tuple[List[FieldNode], List[BufferDesc], List[UInt8]](nodes^, descs^, body^)
+
+
+def decode_list_utf8_array(
+    nodes: List[FieldNode],
+    descs: List[BufferDesc],
+    body: List[UInt8],
+) raises -> ArrowArray:
+    """Reconstruct a List<Utf8> ArrowArray from its two FieldNodes
+    (nodes[0] = list, nodes[1] = child) and five BufferDescs, in the same
+    layout encode_list_utf8_array produces. Additive counterpart to
+    decode_array."""
+    if len(nodes) < 2:
+        raise Error("arrow: decode_list_utf8_array: expected 2 field nodes (list + child)")
+    if len(descs) < 5:
+        raise Error("arrow: decode_list_utf8_array: expected 5 buffer descriptors")
+
+    var list_node = nodes[0].copy()
+    var child_node = nodes[1].copy()
+
+    if descs[0].offset < Int64(0) or descs[0].length < Int64(0):
+        raise Error("arrow: decode_list_utf8_array: negative validity buffer descriptor value")
+    var validity = List[UInt8]()
+    if descs[0].length > Int64(0):
+        var vstart = Int(descs[0].offset)
+        var vend = vstart + Int(descs[0].length)
+        if vend > len(body):
+            raise Error("arrow: decode_list_utf8_array: validity buffer out of bounds")
+        validity.extend(body[vstart:vend].copy())
+
+    if descs[1].offset < Int64(0) or descs[1].length < Int64(0):
+        raise Error("arrow: decode_list_utf8_array: negative offsets buffer descriptor value")
+    var ostart = Int(descs[1].offset)
+    var oend = ostart + Int(descs[1].length)
+    if oend > len(body):
+        raise Error("arrow: decode_list_utf8_array: offsets buffer out of bounds")
+    var offsets = List[UInt8]()
+    offsets.extend(body[ostart:oend].copy())
+
+    var child_descs = List[BufferDesc]()
+    child_descs.append(descs[2].copy())
+    child_descs.append(descs[3].copy())
+    child_descs.append(descs[4].copy())
+    var child = decode_array(ArrowType.utf8(), child_node, child_descs, body)
+
+    return ArrowArray.list_utf8(
+        Int(list_node.length), Int(list_node.null_count), validity, offsets,
+        child.length, child.null_count, child.validity, child.offsets, child.values,
+    )
 
 
 def decode_array(
@@ -917,12 +1141,25 @@ def encode_record_batch(
     var cur_offset  = 0
 
     for i in range(len(arrays)):
-        var result = encode_array(arrays[i], cur_offset)
-        var col_node  = result[0].copy()
-        var col_descs = result[1].copy()
-        var col_body  = result[2].copy()
+        var col_nodes: List[FieldNode]
+        var col_descs: List[BufferDesc]
+        var col_body: List[UInt8]
+        if arrays[i].type.tag == TYPE_LIST():
+            # List<Utf8> emits TWO FieldNodes (list, then child) -- real
+            # Arrow's depth-first pre-order layout for nested types.
+            var result = encode_list_utf8_array(arrays[i], cur_offset)
+            col_nodes = result[0].copy()
+            col_descs = result[1].copy()
+            col_body = result[2].copy()
+        else:
+            var result = encode_array(arrays[i], cur_offset)
+            col_nodes = List[FieldNode]()
+            col_nodes.append(result[0].copy())
+            col_descs = result[1].copy()
+            col_body = result[2].copy()
 
-        nodes.append(col_node^)
+        for j in range(len(col_nodes)):
+            nodes.append(col_nodes[j].copy())
         for j in range(len(col_descs)):
             all_buffers.append(col_descs[j].copy())
         full_body.extend(col_body.copy())
@@ -951,15 +1188,37 @@ def decode_record_batch(
     var next_pos = ipc_result[4]
     _ = len(body)
 
-    if len(nodes) != len(schema.fields):
-        raise Error("arrow: decode_record_batch: node count does not match schema field count")
-
-    var arrays  = List[ArrowArray]()
-    var buf_idx = 0
+    # Unlike scalar types (always exactly 1 FieldNode per schema field),
+    # List<Utf8> emits 2 (list + child) -- so node_idx and buf_idx both
+    # advance independently per column, not in lockstep with the schema
+    # field index the way a strict 1:1 assumption would allow.
+    var arrays   = List[ArrowArray]()
+    var buf_idx  = 0
+    var node_idx = 0
 
     for i in range(len(schema.fields)):
         var field_type = schema.fields[i].type.copy()
-        var node       = nodes[i].copy()
+
+        if field_type.tag == TYPE_LIST():
+            if node_idx + 2 > len(nodes):
+                raise Error("arrow: decode_record_batch: node underrun for List column " + String(i))
+            if buf_idx + 5 > len(buffers):
+                raise Error("arrow: decode_record_batch: buffer descriptor underrun for List column " + String(i))
+            var field_nodes = List[FieldNode]()
+            field_nodes.append(nodes[node_idx].copy())
+            field_nodes.append(nodes[node_idx + 1].copy())
+            node_idx += 2
+            var field_descs = List[BufferDesc]()
+            for j in range(5):
+                field_descs.append(buffers[buf_idx + j].copy())
+            buf_idx += 5
+            arrays.append(decode_list_utf8_array(field_nodes, field_descs, body))
+            continue
+
+        if node_idx + 1 > len(nodes):
+            raise Error("arrow: decode_record_batch: node underrun for column " + String(i))
+        var node = nodes[node_idx].copy()
+        node_idx += 1
 
         # How many buffer descriptors does this type consume?
         var n_bufs: Int
@@ -979,6 +1238,9 @@ def decode_record_batch(
         buf_idx += n_bufs
 
         arrays.append(decode_array(field_type, node, field_descs, body))
+
+    if node_idx != len(nodes):
+        raise Error("arrow: decode_record_batch: unconsumed field nodes remain")
 
     return Tuple[List[ArrowArray], Int](arrays^, next_pos)
 
@@ -1039,17 +1301,7 @@ def _encode_schema_table(mut b: FlatBufferBuilder, schema: ArrowSchema) raises -
     var field_offs = List[UInt32]()
     for i in range(len(schema.fields)):
         var f = schema.fields[i].copy()
-        var type_result = encode_arrow_type(b, f.type)
-        var type_disc = type_result[0]
-        var type_off  = type_result[1]
-        var name_off  = b.create_string(f.name)
-        b.start_table()
-        b.add_field_offset(0, name_off)
-        b.add_field_bool(1, f.nullable)
-        b.add_field_u8(2, type_disc)
-        b.add_field_offset(3, type_off)
-        var foff = b.end_table()
-        field_offs.append(foff)
+        field_offs.append(_encode_field(b, f))
 
     var fields_vec_off = b.create_vector_offsets(field_offs)
     b.start_table()
@@ -1292,14 +1544,36 @@ def decode_arrow_file(
         var rb_body    = rb_result[3].copy()
         _ = rb_next
 
-        if len(rb_nodes) != len(schema.fields):
-            raise Error("arrow: decode_arrow_file: node/field count mismatch in batch " + String(i))
-
-        var arrays  = List[ArrowArray]()
-        var buf_idx = 0
+        # Same List<Utf8>-aware node/buffer accounting as decode_record_batch:
+        # a List column contributes 2 FieldNodes, not 1, so node_idx and
+        # buf_idx both advance independently per column rather than in
+        # lockstep with the schema field index.
+        var arrays   = List[ArrowArray]()
+        var buf_idx  = 0
+        var node_idx = 0
         for j in range(len(schema.fields)):
             var field_type = schema.fields[j].type.copy()
-            var node       = rb_nodes[j].copy()
+
+            if field_type.tag == TYPE_LIST():
+                if node_idx + 2 > len(rb_nodes):
+                    raise Error("arrow: decode_arrow_file: node underrun for List column " + String(j) + " in batch " + String(i))
+                if buf_idx + 5 > len(rb_buffers):
+                    raise Error("arrow: decode_arrow_file: buffer descriptor underrun for List column " + String(j) + " in batch " + String(i))
+                var field_nodes = List[FieldNode]()
+                field_nodes.append(rb_nodes[node_idx].copy())
+                field_nodes.append(rb_nodes[node_idx + 1].copy())
+                node_idx += 2
+                var list_descs = List[BufferDesc]()
+                for k in range(5):
+                    list_descs.append(rb_buffers[buf_idx + k].copy())
+                buf_idx += 5
+                arrays.append(decode_list_utf8_array(field_nodes, list_descs, rb_body))
+                continue
+
+            if node_idx + 1 > len(rb_nodes):
+                raise Error("arrow: decode_arrow_file: node underrun for column " + String(j) + " in batch " + String(i))
+            var node = rb_nodes[node_idx].copy()
+            node_idx += 1
 
             var n_bufs: Int
             if field_type.tag == TYPE_NULL():
@@ -1318,6 +1592,9 @@ def decode_arrow_file(
             buf_idx += n_bufs
 
             arrays.append(decode_array(field_type, node, field_descs, rb_body))
+
+        if node_idx != len(rb_nodes):
+            raise Error("arrow: decode_arrow_file: unconsumed field nodes remain in batch " + String(i))
 
         batches.append(RecordBatch(rb_length, arrays))
 
