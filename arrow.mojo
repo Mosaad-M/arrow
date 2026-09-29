@@ -994,6 +994,35 @@ def encode_list_utf8_array(
     return Tuple[List[FieldNode], List[BufferDesc], List[UInt8]](nodes^, descs^, body^)
 
 
+def _checked_slice_bounds(
+    offset: Int64, length: Int64, body_len: Int, context: String
+) raises -> Tuple[Int, Int]:
+    """Overflow-safe [start, end) bounds for a body slice, given an
+    attacker-controlled (offset, length) BufferDesc pair straight from a
+    parsed IPC file. Real, confirmed exploit (see tasks/lessons.md): the
+    previous per-call-site pattern computed `end = start + length` and
+    checked `end > body_len` -- but a crafted offset/length pair near
+    Int64::MAX makes that addition silently WRAP (Mojo's Int has no
+    overflow trap), producing a small or negative `end` that slips past
+    the check, then crashes on the out-of-bounds slice with the original
+    huge `start` still intact. Subtraction avoids this: `length >
+    body_len - start` can't wrap the same way, since body_len is always
+    small and non-negative and start is already checked non-negative
+    first, so `body_len - start` is always representable. Same pattern
+    decode_ipc_message already used for its own meta_len/body_len checks
+    (`meta_len > len(buf) - pos - 8`), now applied consistently to every
+    buffer-descriptor bounds check that does this same start+length
+    computation."""
+    if offset < Int64(0):
+        raise Error("arrow: " + context + ": negative buffer offset")
+    if length < Int64(0):
+        raise Error("arrow: " + context + ": negative buffer length")
+    var start = Int(offset)
+    if Int(length) > body_len - start:
+        raise Error("arrow: " + context + ": buffer out of bounds")
+    return Tuple[Int, Int](start, start + Int(length))
+
+
 def decode_list_utf8_array(
     nodes: List[FieldNode],
     descs: List[BufferDesc],
@@ -1011,24 +1040,21 @@ def decode_list_utf8_array(
     var list_node = nodes[0].copy()
     var child_node = nodes[1].copy()
 
-    if descs[0].offset < Int64(0) or descs[0].length < Int64(0):
-        raise Error("arrow: decode_list_utf8_array: negative validity buffer descriptor value")
+    # descs[0] (validity) is always bounds-checked, even when its length is
+    # 0 (an absent validity buffer) -- a negative length must still be
+    # rejected regardless of whether anything is actually sliced.
+    var vbounds = _checked_slice_bounds(
+        descs[0].offset, descs[0].length, len(body), "decode_list_utf8_array: validity buffer"
+    )
     var validity = List[UInt8]()
     if descs[0].length > Int64(0):
-        var vstart = Int(descs[0].offset)
-        var vend = vstart + Int(descs[0].length)
-        if vend > len(body):
-            raise Error("arrow: decode_list_utf8_array: validity buffer out of bounds")
-        validity.extend(body[vstart:vend].copy())
+        validity.extend(body[vbounds[0] : vbounds[1]].copy())
 
-    if descs[1].offset < Int64(0) or descs[1].length < Int64(0):
-        raise Error("arrow: decode_list_utf8_array: negative offsets buffer descriptor value")
-    var ostart = Int(descs[1].offset)
-    var oend = ostart + Int(descs[1].length)
-    if oend > len(body):
-        raise Error("arrow: decode_list_utf8_array: offsets buffer out of bounds")
+    var obounds = _checked_slice_bounds(
+        descs[1].offset, descs[1].length, len(body), "decode_list_utf8_array: offsets buffer"
+    )
     var offsets = List[UInt8]()
-    offsets.extend(body[ostart:oend].copy())
+    offsets.extend(body[obounds[0] : obounds[1]].copy())
 
     var child_descs = List[BufferDesc]()
     child_descs.append(descs[2].copy())
@@ -1066,46 +1092,33 @@ def decode_array(
     # ── Validity buffer (descs[0]) ────────────────────────────────────────────
     if len(descs) < 1:
         raise Error("arrow: decode_array: missing validity buffer descriptor")
-    # S-P5-1: guard against negative offset/length from corrupt IPC data
-    if descs[0].offset < Int64(0):
-        raise Error("arrow: decode_array: negative validity buffer offset")
-    if descs[0].length < Int64(0):
-        raise Error("arrow: decode_array: negative validity buffer length")
+    # Always bounds-checked (via the overflow-safe helper), even when the
+    # length is 0 (an absent validity buffer) -- see _checked_slice_bounds.
+    var vbounds = _checked_slice_bounds(
+        descs[0].offset, descs[0].length, len(body), "decode_array: validity buffer"
+    )
     if descs[0].length > Int64(0):
-        var start = Int(descs[0].offset)
-        var end   = start + Int(descs[0].length)
-        if end > len(body):
-            raise Error("arrow: decode_array: validity buffer out of bounds")
-        validity.extend(body[start:end].copy())
+        validity.extend(body[vbounds[0] : vbounds[1]].copy())
 
     # ── Offsets + values (Utf8 / Binary) or just values (all other types) ────
     if type.tag == TYPE_UTF8() or type.tag == TYPE_BINARY():
         if len(descs) < 3:
             raise Error("arrow: decode_array: expected 3 buffer descriptors for variable-length type")
-        if descs[1].offset < Int64(0) or descs[1].length < Int64(0):
-            raise Error("arrow: decode_array: negative offsets buffer descriptor value")
-        if descs[2].offset < Int64(0) or descs[2].length < Int64(0):
-            raise Error("arrow: decode_array: negative values buffer descriptor value")
-        var ostart = Int(descs[1].offset)
-        var oend   = ostart + Int(descs[1].length)
-        if oend > len(body):
-            raise Error("arrow: decode_array: offsets buffer out of bounds")
-        offsets.extend(body[ostart:oend].copy())
-        var vstart = Int(descs[2].offset)
-        var vend   = vstart + Int(descs[2].length)
-        if vend > len(body):
-            raise Error("arrow: decode_array: values buffer out of bounds")
-        values.extend(body[vstart:vend].copy())
+        var obounds = _checked_slice_bounds(
+            descs[1].offset, descs[1].length, len(body), "decode_array: offsets buffer"
+        )
+        offsets.extend(body[obounds[0] : obounds[1]].copy())
+        var vabounds = _checked_slice_bounds(
+            descs[2].offset, descs[2].length, len(body), "decode_array: values buffer"
+        )
+        values.extend(body[vabounds[0] : vabounds[1]].copy())
     else:
         if len(descs) < 2:
             raise Error("arrow: decode_array: expected 2 buffer descriptors for fixed-width type")
-        if descs[1].offset < Int64(0) or descs[1].length < Int64(0):
-            raise Error("arrow: decode_array: negative values buffer descriptor value")
-        var vstart = Int(descs[1].offset)
-        var vend   = vstart + Int(descs[1].length)
-        if vend > len(body):
-            raise Error("arrow: decode_array: values buffer out of bounds")
-        values.extend(body[vstart:vend].copy())
+        var vabounds = _checked_slice_bounds(
+            descs[1].offset, descs[1].length, len(body), "decode_array: values buffer"
+        )
+        values.extend(body[vabounds[0] : vabounds[1]].copy())
 
     return ArrowArray(
         type, Int(node.length), Int(node.null_count),

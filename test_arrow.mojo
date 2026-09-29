@@ -1355,6 +1355,56 @@ def test_adversarial_decode_array_negative_length() raises:
     assert_true(raised, "expected error for negative buffer length")
 
 
+def test_adversarial_decode_array_offset_length_overflow() raises:
+    """decode_array raises cleanly (not a process crash) when a crafted
+    BufferDesc's offset+length would silently wrap Int64 -- a real,
+    confirmed exploit before this fix: offset and length each near
+    Int64::MAX made `start + length` wrap to a small/negative value,
+    slipping past an addition-based `end > len(body)` check, then
+    crashing on the out-of-bounds slice with the original huge `start`
+    still intact. _checked_slice_bounds's subtraction-based check
+    (`length > body_len - start`) can't wrap the same way."""
+    var node = FieldNode(Int64(1), Int64(1))
+    var descs = List[BufferDesc]()
+    var evil = Int64(9223372036854775000)  # near Int64::MAX
+    descs.append(BufferDesc(evil, evil))  # validity: would overflow if added
+    descs.append(BufferDesc(Int64(0), Int64(4)))
+    var body = List[UInt8]()
+    for _ in range(8):
+        body.append(UInt8(0))
+    var raised = False
+    try:
+        _ = decode_array(ArrowType.int_(32, True), node, descs, body)
+    except:
+        raised = True
+    assert_true(raised, "expected a clean error, not a crash, for overflowing offset+length")
+
+
+def test_adversarial_decode_list_utf8_array_offset_length_overflow() raises:
+    """Same overflow exploit, against decode_list_utf8_array's validity
+    buffer bounds check specifically (a second, separate call site that
+    had the identical vulnerable pattern before this fix)."""
+    var nodes = List[FieldNode]()
+    nodes.append(FieldNode(Int64(1), Int64(1)))
+    nodes.append(FieldNode(Int64(0), Int64(0)))
+    var descs = List[BufferDesc]()
+    var evil = Int64(9223372036854775000)
+    descs.append(BufferDesc(evil, evil))  # list validity: overflow attempt
+    descs.append(BufferDesc(Int64(0), Int64(4)))  # list offsets
+    descs.append(BufferDesc(Int64(0), Int64(0)))  # child validity
+    descs.append(BufferDesc(Int64(4), Int64(4)))  # child offsets
+    descs.append(BufferDesc(Int64(8), Int64(0)))  # child values
+    var body = List[UInt8]()
+    for _ in range(8):
+        body.append(UInt8(0))
+    var raised = False
+    try:
+        _ = decode_list_utf8_array(nodes, descs, body)
+    except:
+        raised = True
+    assert_true(raised, "expected a clean error, not a crash, for overflowing offset+length")
+
+
 def test_decode_arrow_file_wrong_magic() raises:
     """Wrong magic prefix raises an error."""
     var bad = List[UInt8]()
@@ -1455,6 +1505,8 @@ def main() raises:
     # Phase 5 security adversarial tests
     run_test[test_adversarial_decode_array_negative_offset]("test_adversarial_decode_array_negative_offset", passed, failed)
     run_test[test_adversarial_decode_array_negative_length]("test_adversarial_decode_array_negative_length", passed, failed)
+    run_test[test_adversarial_decode_array_offset_length_overflow]("test_adversarial_decode_array_offset_length_overflow", passed, failed)
+    run_test[test_adversarial_decode_list_utf8_array_offset_length_overflow]("test_adversarial_decode_list_utf8_array_offset_length_overflow", passed, failed)
 
     # List<Utf8>
     run_test[test_encode_decode_list_utf8_array_roundtrip]("test_encode_decode_list_utf8_array_roundtrip", passed, failed)
