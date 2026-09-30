@@ -1198,9 +1198,25 @@ def _record_batch_header(
     is byte-identical to encode_record_batch's output."""
     var layout = _layout_record_batch(schema, arrays)
     var row_count = Int64(arrays[0].length) if len(arrays) > 0 else Int64(0)
-    var metadata = _record_batch_metadata(row_count, layout[0], layout[1], layout[2])
+    return Tuple[List[UInt8], Int](
+        encode_record_batch_header(row_count, layout[0], layout[1], layout[2]), layout[2]
+    )
+
+
+def encode_record_batch_header(
+    length: Int64, nodes: List[FieldNode], buffers: List[BufferDesc], body_len: Int
+) raises -> List[UInt8]:
+    """The IPC envelope of a RecordBatch message up to (not including) its
+    body: continuation marker, metadata length, metadata, padding to 8.
+
+    For callers that write column bytes themselves (e.g. straight from raw
+    memory): write this, then `body_len` bytes of body laid out as
+    `buffers` describes (each buffer padded to 8), and record a FileBlock
+    with metadata_length = len(this header). Unlike encode_record_batch,
+    the body itself is never held in memory, so it is not size-capped."""
+    var metadata = _record_batch_metadata(length, nodes, buffers, body_len)
     if len(metadata) > _max_ipc_msg():
-        raise Error("arrow: encode_ipc_message: message too large (> 1 GB)")
+        raise Error("arrow: encode_record_batch_header: metadata too large (> 1 GB)")
     var header_size = 8 + len(metadata)
     var header = List[UInt8](capacity=ipc_pad8(header_size))
     for _ in range(8):
@@ -1210,7 +1226,7 @@ def _record_batch_header(
     header.extend(Span(metadata))
     for _ in range(ipc_pad8(header_size) - header_size):
         header.append(UInt8(0))
-    return Tuple[List[UInt8], Int](header^, layout[2])
+    return header^
 
 
 def encode_record_batch(
@@ -1391,7 +1407,7 @@ def _block_body_len_from_bytes(data: List[UInt8]) raises -> Int64:
     return read_i64_le(data, 16)
 
 
-def _encode_file_header(schema: ArrowSchema) raises -> List[UInt8]:
+def encode_file_header(schema: ArrowSchema) raises -> List[UInt8]:
     """The bytes an Arrow IPC file starts with: 8-byte magic + Schema IPC
     message. Shared by encode_arrow_file and ArrowFileWriter."""
     var out = _arrow_magic()
@@ -1414,6 +1430,38 @@ def _emit_file_batch[S: _ByteSink](
     for c in range(len(batch.columns)):
         _emit_array(sink, batch.columns[c])
     return len(hdr[0]) + hdr[1]
+
+
+struct FileBlock(Copyable, Movable):
+    """Where one RecordBatch message sits in an Arrow IPC file, as recorded
+    in the footer: its byte offset, the length of its header (as returned
+    by encode_record_batch_header), and its body length."""
+
+    var offset: Int
+    var metadata_length: Int
+    var body_length: Int
+
+    def __init__(out self, offset: Int, metadata_length: Int, body_length: Int):
+        self.offset = offset
+        self.metadata_length = metadata_length
+        self.body_length = body_length
+
+
+def encode_file_footer(schema: ArrowSchema, blocks: List[FileBlock]) raises -> List[UInt8]:
+    """The bytes that end an Arrow IPC file: Footer (schema + one Block per
+    RecordBatch), footer size, and the 6-byte trailing magic. With
+    encode_file_header and encode_record_batch_header, lets a caller that
+    writes its own column bytes produce a complete, valid file."""
+    var raw = List[UInt8](capacity=len(blocks) * 24)
+    for i in range(len(blocks)):
+        raw.extend(
+            _block_bytes(
+                Int64(blocks[i].offset),
+                Int32(blocks[i].metadata_length),
+                Int64(blocks[i].body_length),
+            )
+        )
+    return _encode_file_footer(schema, raw, len(blocks))
 
 
 def _encode_file_footer(
@@ -1487,7 +1535,7 @@ def encode_arrow_file(
     # Reserve the whole file up front: body sizes are known from the layout
     # alone, and growing by doubling would transiently hold ~2x the file.
     # Headers and footer are small; the slack covers them.
-    var header = _encode_file_header(schema)
+    var header = encode_file_header(schema)
     var total = len(header) + 4096 + len(batches) * 1024 + len(schema.fields) * 256
     for b in range(len(batches)):
         total += _layout_record_batch(schema, batches[b].columns)[2]
@@ -1526,7 +1574,7 @@ struct ArrowFileWriter(Movable):
         self._blocks = List[UInt8]()
         self._n_blocks = 0
         self._finished = False
-        var header = _encode_file_header(schema)
+        var header = encode_file_header(schema)
         self._sink.put(header)
         self._pos = len(header)
 

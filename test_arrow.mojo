@@ -28,6 +28,10 @@ from arrow import (
     encode_arrow_file,
     decode_arrow_file,
     ArrowFileWriter,
+    FileBlock,
+    encode_file_header,
+    encode_record_batch_header,
+    encode_file_footer,
 )
 from std.pathlib import Path
 from flatbuffers import (
@@ -1532,6 +1536,68 @@ def test_arrow_array_and_record_batch_copies_are_independent() raises:
     assert_true(batch.columns[0].child_values[0] == UInt8(77), "original batch column untouched")
 
 
+def _assemble_file_by_hand(schema: ArrowSchema, batches: List[RecordBatch]) raises -> List[UInt8]:
+    """Build an Arrow file only from the public low-level pieces, the way a
+    caller streaming its own column bytes would."""
+    var out = encode_file_header(schema)
+    var blocks = List[FileBlock]()
+    for bi in range(len(batches)):
+        var nodes = List[FieldNode]()
+        var descs = List[BufferDesc]()
+        var body = List[UInt8]()
+        for c in range(len(batches[bi].columns)):
+            if batches[bi].columns[c].type.tag == TYPE_LIST():
+                var r = encode_list_utf8_array(batches[bi].columns[c], len(body))
+                for n in r[0]:
+                    nodes.append(n.copy())
+                for d in r[1]:
+                    descs.append(d.copy())
+                body.extend(Span(r[2]))
+            else:
+                var r = encode_array(batches[bi].columns[c], len(body))
+                nodes.append(r[0].copy())
+                for d in r[1]:
+                    descs.append(d.copy())
+                body.extend(Span(r[2]))
+        var header = encode_record_batch_header(batches[bi].length, nodes, descs, len(body))
+        blocks.append(FileBlock(len(out), len(header), len(body)))
+        out.extend(Span(header))
+        out.extend(Span(body))
+    out.extend(Span(encode_file_footer(schema, blocks)))
+    return out^
+
+
+def test_low_level_file_api_matches_encode_arrow_file() raises:
+    """encode_file_header + encode_record_batch_header + encode_file_footer
+    around caller-written bodies must reproduce encode_arrow_file exactly:
+    multiple batches, and a List<Utf8> column with nulls."""
+    var schema = _make_simple_schema()
+    var batches = _two_int_batches()
+    _assert_bytes_equal(
+        _assemble_file_by_hand(schema, batches),
+        encode_arrow_file(schema, batches),
+        "int32, two batches",
+    )
+
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("patient_ids", ArrowType.list_utf8(), True))
+    var lschema = ArrowSchema(fields, Int16(0))
+    var arrays = List[ArrowArray]()
+    arrays.append(_make_list_utf8_array())
+    var lbatches = List[RecordBatch]()
+    lbatches.append(RecordBatch(Int64(3), arrays^))
+    _assert_bytes_equal(
+        _assemble_file_by_hand(lschema, lbatches),
+        encode_arrow_file(lschema, lbatches),
+        "list<utf8> with nulls",
+    )
+    _assert_bytes_equal(
+        _assemble_file_by_hand(schema, List[RecordBatch]()),
+        encode_arrow_file(schema, List[RecordBatch]()),
+        "zero batches",
+    )
+
+
 # ============================================================================
 # Test runner
 # ============================================================================
@@ -1642,6 +1708,7 @@ def main() raises:
     run_test[test_arrow_file_writer_zero_batches]("test_arrow_file_writer_zero_batches", passed, failed)
     run_test[test_arrow_file_writer_write_after_finish_raises]("test_arrow_file_writer_write_after_finish_raises", passed, failed)
     run_test[test_arrow_array_and_record_batch_copies_are_independent]("test_arrow_array_and_record_batch_copies_are_independent", passed, failed)
+    run_test[test_low_level_file_api_matches_encode_arrow_file]("test_low_level_file_api_matches_encode_arrow_file", passed, failed)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:

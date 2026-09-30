@@ -18,6 +18,12 @@ formats.  No C dependencies, no FFI — just Mojo.
   + Buffer struct vectors via FlatBuffers)
 - **Typed column encoding** — `ArrowArray` with validity bitmaps, offset
   buffers, and value buffers; full encode/decode roundtrip
+- **Low-level file assembly**: `encode_file_header`,
+  `encode_record_batch_header` and `encode_file_footer` (with `FileBlock`)
+  let a caller that writes its own column bytes, e.g. straight from raw
+  memory, still produce a complete, valid Arrow file; the format details
+  stay in this library. Byte-identical to `encode_arrow_file` for the
+  same data
 - **Copy-free by default**: `ArrowArray` and `RecordBatch` take ownership
   of the buffers they are given (pass `buf^`; pass `buf.copy()` only to
   keep your own), and encoding copies each column's bytes exactly once,
