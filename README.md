@@ -20,6 +20,10 @@ formats.  No C dependencies, no FFI — just Mojo.
   buffers, and value buffers; full encode/decode roundtrip
 - **Feather v2 / Arrow IPC file format** — `encode_arrow_file` /
   `decode_arrow_file` with proper magic bytes and FlatBuffers Footer
+- **Incremental file writing**: `ArrowFileWriter` appends one
+  RecordBatch at a time straight to disk and writes the Footer on
+  `finish()`, so output size is not bounded by memory. Produces
+  byte-identical output to `encode_arrow_file` for the same batches
 - **CSV → Feather** — `csv_to_feather` reads a CSV, infers types (Int64,
   Float64, Utf8), and writes a standards-compliant `.feather` file
 - **Feather → CSV** — `feather_to_csv` reconstructs a CSV from any
@@ -87,7 +91,7 @@ and the pixi task forwards its arguments through.
 from arrow import (
     ArrowSchema, ArrowField, ArrowType,
     ArrowArray, RecordBatch,
-    encode_arrow_file, decode_arrow_file,
+    encode_arrow_file, decode_arrow_file, ArrowFileWriter,
 )
 
 # Build a schema
@@ -114,6 +118,11 @@ var file_bytes = encode_arrow_file(schema, batches)
 var result   = decode_arrow_file(file_bytes)
 var schema2  = result[0].copy()
 var batches2 = result[1].copy()
+
+# Or write batch by batch without holding them all in memory
+var w = ArrowFileWriter("out.feather", schema)
+w.write_batch(batch)
+w.finish()   # writes the Footer; the file is invalid until this runs
 ```
 
 ### CSV → Feather

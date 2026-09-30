@@ -27,7 +27,9 @@ from arrow import (
     RecordBatch,
     encode_arrow_file,
     decode_arrow_file,
+    ArrowFileWriter,
 )
+from std.pathlib import Path
 from flatbuffers import (
     read_i32_le, read_i64_le, read_u32_le, read_f64_le, write_u32_le, write_i32_le, write_f64_le,
     FlatBufferBuilder, FlatBuffersReader,
@@ -1419,6 +1421,99 @@ def test_decode_arrow_file_wrong_magic() raises:
 
 
 # ============================================================================
+# ArrowFileWriter -- incremental (one batch at a time) IPC file writing
+# ============================================================================
+
+
+def _two_int_batches() -> List[RecordBatch]:
+    var v0 = List[UInt8]()
+    _write_i32_le_into(v0, Int32(1))
+    var cols0 = List[ArrowArray]()
+    cols0.append(ArrowArray(ArrowType.int_(32, True), 1, 0, List[UInt8](), List[UInt8](), v0))
+    var v1 = List[UInt8]()
+    _write_i32_le_into(v1, Int32(2))
+    _write_i32_le_into(v1, Int32(3))
+    var cols1 = List[ArrowArray]()
+    cols1.append(ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v1))
+    var batches = List[RecordBatch]()
+    batches.append(RecordBatch(Int64(1), cols0))
+    batches.append(RecordBatch(Int64(2), cols1))
+    return batches^
+
+
+def _assert_bytes_equal(actual: List[UInt8], expected: List[UInt8], msg: String) raises:
+    assert_eq_int(len(actual), len(expected), msg + ": length")
+    for i in range(len(expected)):
+        if actual[i] != expected[i]:
+            raise Error(msg + ": first differing byte at " + String(i))
+
+
+def test_arrow_file_writer_matches_encode_arrow_file_multi_batch() raises:
+    """Writing batches one at a time must produce exactly the bytes
+    encode_arrow_file produces for the same batches all at once -- the
+    writer is the same format, just without holding every batch."""
+    var schema = _make_simple_schema()
+    var batches = _two_int_batches()
+    var path = "/tmp/arrow_test_writer_multi.feather"
+    var w = ArrowFileWriter(path, schema)
+    for i in range(len(batches)):
+        w.write_batch(batches[i])
+    w.finish()
+    _assert_bytes_equal(
+        Path(path).read_bytes(), encode_arrow_file(schema, batches), "multi-batch"
+    )
+
+
+def test_arrow_file_writer_matches_encode_arrow_file_list_utf8() raises:
+    var fields = List[ArrowField]()
+    fields.append(ArrowField("patient_ids", ArrowType.list_utf8(), True))
+    var schema = ArrowSchema(fields, Int16(0))
+    var arrays = List[ArrowArray]()
+    arrays.append(_make_list_utf8_array())
+    var batches = List[RecordBatch]()
+    batches.append(RecordBatch(Int64(3), arrays))
+    var path = "/tmp/arrow_test_writer_list.feather"
+    var w = ArrowFileWriter(path, schema)
+    w.write_batch(batches[0])
+    w.finish()
+    _assert_bytes_equal(
+        Path(path).read_bytes(), encode_arrow_file(schema, batches), "list<utf8>"
+    )
+
+
+def test_arrow_file_writer_zero_batches() raises:
+    var schema = _make_simple_schema()
+    var path = "/tmp/arrow_test_writer_empty.feather"
+    var w = ArrowFileWriter(path, schema)
+    w.finish()
+    _assert_bytes_equal(
+        Path(path).read_bytes(),
+        encode_arrow_file(schema, List[RecordBatch]()),
+        "zero batches",
+    )
+
+
+def test_arrow_file_writer_write_after_finish_raises() raises:
+    var schema = _make_simple_schema()
+    var batches = _two_int_batches()
+    var w = ArrowFileWriter("/tmp/arrow_test_writer_closed.feather", schema)
+    w.write_batch(batches[0])
+    w.finish()
+    var raised = False
+    try:
+        w.write_batch(batches[1])
+    except:
+        raised = True
+    assert_true(raised, "write_batch after finish should raise")
+    raised = False
+    try:
+        w.finish()
+    except:
+        raised = True
+    assert_true(raised, "second finish should raise")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -1523,6 +1618,10 @@ def main() raises:
     run_test[test_arrow_file_block_body_length_matches_real_message]("test_arrow_file_block_body_length_matches_real_message", passed, failed)
     run_test[test_arrow_file_multi_batch]("test_arrow_file_multi_batch", passed, failed)
     run_test[test_decode_arrow_file_wrong_magic]("test_decode_arrow_file_wrong_magic", passed, failed)
+    run_test[test_arrow_file_writer_matches_encode_arrow_file_multi_batch]("test_arrow_file_writer_matches_encode_arrow_file_multi_batch", passed, failed)
+    run_test[test_arrow_file_writer_matches_encode_arrow_file_list_utf8]("test_arrow_file_writer_matches_encode_arrow_file_list_utf8", passed, failed)
+    run_test[test_arrow_file_writer_zero_batches]("test_arrow_file_writer_zero_batches", passed, failed)
+    run_test[test_arrow_file_writer_write_after_finish_raises]("test_arrow_file_writer_write_after_finish_raises", passed, failed)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:

@@ -1343,6 +1343,98 @@ def _block_body_len_from_bytes(data: List[UInt8]) raises -> Int64:
     return read_i64_le(data, 16)
 
 
+def _encode_file_header(schema: ArrowSchema) raises -> List[UInt8]:
+    """The bytes an Arrow IPC file starts with: 8-byte magic + Schema IPC
+    message. Shared by encode_arrow_file and ArrowFileWriter."""
+    var out = _arrow_magic()
+    out.extend(encode_schema_message(schema))
+    return out^
+
+
+def _encode_file_batch(
+    schema: ArrowSchema, batch: RecordBatch, file_offset: Int, mut blocks: List[UInt8]
+) raises -> List[UInt8]:
+    """Encode one RecordBatch IPC message destined for byte `file_offset`
+    of the file, appending its 24-byte footer Block to `blocks`. Shared by
+    encode_arrow_file and ArrowFileWriter."""
+    var arrays = List[ArrowArray]()
+    for c in range(len(batch.columns)):
+        arrays.append(batch.columns[c].copy())
+
+    var rb_msg = encode_record_batch(schema, arrays)
+
+    # decode_ipc_message's 3rd return value (next_pos) is the position
+    # PAST the body (= padded_header_end + ipc_pad8(body_len)), not the
+    # end of the header -- so `rb_msg_len - rb_next` computed ~0 instead
+    # of the real body length (a real bug, caught by real Arrow/pyarrow
+    # rejecting the file with a Block/Message bodyLength mismatch; this
+    # package's own decode_arrow_file never noticed, since it re-derives
+    # batch boundaries by parsing each message directly rather than
+    # trusting these two Block fields). Use the actual decoded body
+    # bytes' length directly, and derive metaDataLength (the padded
+    # header size) by subtracting the body's own padding back out of
+    # next_pos -- both computed from values decode_ipc_message already
+    # returns, no signature change needed.
+    var ipc_result = decode_ipc_message(rb_msg, 0)
+    var rb_body_len = len(ipc_result[1])
+    var rb_next = ipc_result[2]
+
+    # metaDataLength = total IPC envelope size excluding body and its padding
+    # (i.e., the padded header: continuation + meta_len_field + metadata + header_pad)
+    var rb_meta_len = Int32(rb_next - ipc_pad8(rb_body_len))
+
+    blocks.extend(_block_bytes(Int64(file_offset), rb_meta_len, Int64(rb_body_len)))
+    return rb_msg^
+
+
+def _encode_file_footer(
+    schema: ArrowSchema, blocks: List[UInt8], n_blocks: Int
+) raises -> List[UInt8]:
+    """The bytes an Arrow IPC file ends with: Footer FlatBuffer (schema +
+    one Block per RecordBatch) + footer_size + 6-byte trailing magic.
+    Shared by encode_arrow_file and ArrowFileWriter."""
+    var est = len(schema.fields) * 100 + n_blocks * 32 + 256
+    if est < 512:
+        est = 512
+    var fb = FlatBufferBuilder(est)
+
+    # Schema table embedded in Footer (no Message envelope)
+    var schema_tbl = _encode_schema_table(fb, schema)
+
+    # dictionaries vector (empty)
+    var empty_offs = List[UInt32]()
+    var dicts_vec  = fb.create_vector_offsets(empty_offs)
+
+    # recordBatches Block struct vector (24 bytes per block)
+    var rb_vec_off = fb.create_vector_structs(blocks, n_blocks, 24, 8)
+
+    # Footer table
+    fb.start_table()
+    fb.add_field_i16(0, Int16(4))          # version = V5
+    fb.add_field_offset(1, schema_tbl)
+    fb.add_field_offset(2, dicts_vec)
+    fb.add_field_offset(3, rb_vec_off)
+    var footer_off = fb.end_table()
+
+    var out = fb.finish(footer_off)
+    var footer_size = Int32(len(out))
+
+    # ── footer_size (i32 LE) ──────────────────────────────────────────────────
+    for _ in range(4):
+        out.append(UInt8(0))
+    write_i32_le(out, len(out) - 4, footer_size)
+
+    # ── Trailer magic ─────────────────────────────────────────────────────────
+    # Per the Arrow IPC File Format spec, the trailing magic is exactly 6
+    # bytes ("ARROW1", unpadded) — unlike the leading magic, which is 8
+    # bytes padded for alignment. Do not reuse the full 8-byte magic here.
+    var magic = _arrow_magic()
+    for i in range(6):
+        out.append(magic[i])
+
+    return out^
+
+
 def encode_arrow_file(
     schema: ArrowSchema,
     batches: List[RecordBatch],
@@ -1358,111 +1450,62 @@ def encode_arrow_file(
       [Footer FlatBuffer]
       [footer_size: i32 LE, 4 bytes]
       [magic: 6]  (unpadded trailing magic, NOT the same 8-byte header magic)
+
+    Holds the whole file in memory; use ArrowFileWriter to write batches
+    to disk one at a time instead.
     """
-    var out = List[UInt8]()
-
-    # ── Header magic ─────────────────────────────────────────────────────────
-    var magic = _arrow_magic()
-    for i in range(8):
-        out.append(magic[i])
-
-    # ── Schema IPC message ────────────────────────────────────────────────────
-    var schema_msg = encode_schema_message(schema)
-    for i in range(len(schema_msg)):
-        out.append(schema_msg[i])
-
-    # ── RecordBatch IPC messages ──────────────────────────────────────────────
-    # Track Block info for each batch so we can build the Footer.
-    var rb_blocks_bytes = List[UInt8]()   # raw 24-byte blocks
-    var n_blocks = 0
-
+    var out = _encode_file_header(schema)
+    var blocks = List[UInt8]()
     for b in range(len(batches)):
-        var batch = batches[b].copy()
-        var file_offset = Int64(len(out))
-
-        # Build arrays from batch.columns using schema for type info
-        var arrays = List[ArrowArray]()
-        for c in range(len(batch.columns)):
-            arrays.append(batch.columns[c].copy())
-
-        var rb_msg = encode_record_batch(schema, arrays)
-
-        # decode_ipc_message's 3rd return value (next_pos) is the position
-        # PAST the body (= padded_header_end + ipc_pad8(body_len)), not the
-        # end of the header -- so `rb_msg_len - rb_next` computed ~0 instead
-        # of the real body length (a real bug, caught by real Arrow/pyarrow
-        # rejecting the file with a Block/Message bodyLength mismatch; this
-        # package's own decode_arrow_file never noticed, since it re-derives
-        # batch boundaries by parsing each message directly rather than
-        # trusting these two Block fields). Use the actual decoded body
-        # bytes' length directly, and derive metaDataLength (the padded
-        # header size) by subtracting the body's own padding back out of
-        # next_pos -- both computed from values decode_ipc_message already
-        # returns, no signature change needed.
-        var ipc_result = decode_ipc_message(rb_msg, 0)
-        var rb_meta = ipc_result[0].copy()
-        var rb_body = ipc_result[1].copy()
-        var rb_next = ipc_result[2]
-        var rb_body_len = Int64(len(rb_body))
-
-        # metaDataLength = total IPC envelope size excluding body and its padding
-        # (i.e., the padded header: continuation + meta_len_field + metadata + header_pad)
-        var rb_meta_len = Int32(rb_next - ipc_pad8(len(rb_body)))
-
-        var blk = _block_bytes(file_offset, rb_meta_len, rb_body_len)
-        for i in range(24):
-            rb_blocks_bytes.append(blk[i])
-        n_blocks += 1
-
-        out.extend(rb_msg.copy())
-
-        _ = rb_meta
-
-    # ── Footer FlatBuffer ─────────────────────────────────────────────────────
-    var est = len(schema.fields) * 100 + n_blocks * 32 + 256
-    if est < 512:
-        est = 512
-    var fb = FlatBufferBuilder(est)
-
-    # Schema table embedded in Footer (no Message envelope)
-    var schema_tbl = _encode_schema_table(fb, schema)
-
-    # dictionaries vector (empty)
-    var empty_offs = List[UInt32]()
-    var dicts_vec  = fb.create_vector_offsets(empty_offs)
-
-    # recordBatches Block struct vector (24 bytes per block)
-    var rb_vec_off = fb.create_vector_structs(rb_blocks_bytes, n_blocks, 24, 8)
-
-    # Footer table
-    fb.start_table()
-    fb.add_field_i16(0, Int16(4))          # version = V5
-    fb.add_field_offset(1, schema_tbl)
-    fb.add_field_offset(2, dicts_vec)
-    fb.add_field_offset(3, rb_vec_off)
-    var footer_off = fb.end_table()
-
-    var footer_bytes = fb.finish(footer_off)
-    var footer_size  = Int32(len(footer_bytes))
-
-    for i in range(len(footer_bytes)):
-        out.append(footer_bytes[i])
-
-    # ── footer_size (i32 LE) ──────────────────────────────────────────────────
-    out.append(UInt8(0))
-    out.append(UInt8(0))
-    out.append(UInt8(0))
-    out.append(UInt8(0))
-    write_i32_le(out, len(out) - 4, footer_size)
-
-    # ── Trailer magic ─────────────────────────────────────────────────────────
-    # Per the Arrow IPC File Format spec, the trailing magic is exactly 6
-    # bytes ("ARROW1", unpadded) — unlike the leading magic, which is 8
-    # bytes padded for alignment. Do not reuse the full 8-byte `magic` here.
-    for i in range(6):
-        out.append(magic[i])
-
+        out.extend(_encode_file_batch(schema, batches[b], len(out), blocks))
+    out.extend(_encode_file_footer(schema, blocks, len(batches)))
     return out^
+
+
+struct ArrowFileWriter(Movable):
+    """Writes an Arrow IPC file (Feather v2) to disk one RecordBatch at a
+    time, producing exactly the bytes encode_arrow_file would for the same
+    batches. Only the current batch and the footer's 24-byte-per-batch
+    Block list are held in memory, so a file of any size can be written
+    in bounded memory.
+
+    Usage: construct (writes magic + schema), write_batch() any number of
+    times, then finish() (writes the footer). A file that is never
+    finish()ed is left truncated and is not a valid Arrow file.
+    """
+
+    var _file: FileHandle
+    var _schema: ArrowSchema
+    var _pos: Int
+    var _blocks: List[UInt8]
+    var _n_blocks: Int
+    var _finished: Bool
+
+    def __init__(out self, path: String, schema: ArrowSchema) raises:
+        self._file = open(path, "w")
+        self._schema = schema.copy()
+        self._blocks = List[UInt8]()
+        self._n_blocks = 0
+        self._finished = False
+        var header = _encode_file_header(schema)
+        self._file.write_bytes(Span(header))
+        self._pos = len(header)
+
+    def write_batch(mut self, batch: RecordBatch) raises:
+        if self._finished:
+            raise Error("arrow: ArrowFileWriter.write_batch: writer already finished")
+        var msg = _encode_file_batch(self._schema, batch, self._pos, self._blocks)
+        self._file.write_bytes(Span(msg))
+        self._pos += len(msg)
+        self._n_blocks += 1
+
+    def finish(mut self) raises:
+        if self._finished:
+            raise Error("arrow: ArrowFileWriter.finish: writer already finished")
+        self._finished = True
+        var footer = _encode_file_footer(self._schema, self._blocks, self._n_blocks)
+        self._file.write_bytes(Span(footer))
+        self._file.close()
 
 
 def decode_arrow_file(
