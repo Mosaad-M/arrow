@@ -88,14 +88,14 @@ def encode_ipc_message(metadata: List[UInt8], body: List[UInt8]) raises -> List[
     write_i32_le(out, 4, Int32(meta_len))
 
     # Metadata bytes
-    out.extend(metadata.copy())
+    out.extend(Span(metadata))
 
     # Padding after metadata
     for _ in range(meta_pad):
         out.append(UInt8(0))
 
     # Body bytes
-    out.extend(body.copy())
+    out.extend(Span(body))
 
     # Padding after body
     for _ in range(body_pad):
@@ -655,6 +655,18 @@ def encode_record_batch_message(
 
     Returns full IPC message bytes (header envelope + body).
     """
+    return encode_ipc_message(
+        _record_batch_metadata(length, nodes, buffers, len(body)), body
+    )
+
+
+def _record_batch_metadata(
+    length: Int64,
+    nodes: List[FieldNode],
+    buffers: List[BufferDesc],
+    body_len: Int,
+) raises -> List[UInt8]:
+    """The Message FlatBuffer for a RecordBatch (no IPC envelope)."""
     if len(nodes) > 65536:
         raise Error("arrow: encode_record_batch_message: too many nodes (> 65536)")
     if len(buffers) > 65536:
@@ -693,11 +705,10 @@ def encode_record_batch_message(
     b.add_field_i16(0, Int16(4))
     b.add_field_u8(1, UInt8(3))
     b.add_field_offset(2, rb_off)
-    b.add_field_i64(3, Int64(len(body)))
+    b.add_field_i64(3, Int64(body_len))
     var msg_off = b.end_table()
 
-    var flatbuf = b.finish(msg_off)
-    return encode_ipc_message(flatbuf, body)
+    return b.finish(msg_off)
 
 
 def decode_record_batch_message(
@@ -786,51 +797,41 @@ struct ArrowArray(Copyable, Movable):
         type: ArrowType,
         length: Int,
         null_count: Int,
-        validity: List[UInt8],
-        offsets: List[UInt8],
-        values: List[UInt8],
+        var validity: List[UInt8],
+        var offsets: List[UInt8],
+        var values: List[UInt8],
         child_length: Int = 0,
         child_null_count: Int = 0,
-        child_validity: List[UInt8] = List[UInt8](),
-        child_offsets: List[UInt8] = List[UInt8](),
-        child_values: List[UInt8] = List[UInt8](),
+        var child_validity: List[UInt8] = List[UInt8](),
+        var child_offsets: List[UInt8] = List[UInt8](),
+        var child_values: List[UInt8] = List[UInt8](),
     ):
+        """Takes ownership of every buffer: pass `buf^` to hand a builder's
+        buffer over without copying it, or `buf.copy()` to keep your own."""
         self.type = type.copy()
         self.length = length
         self.null_count = null_count
-        self.validity = List[UInt8]()
-        self.validity.extend(validity.copy())
-        self.offsets = List[UInt8]()
-        self.offsets.extend(offsets.copy())
-        self.values = List[UInt8]()
-        self.values.extend(values.copy())
+        self.validity = validity^
+        self.offsets = offsets^
+        self.values = values^
         self.child_length = child_length
         self.child_null_count = child_null_count
-        self.child_validity = List[UInt8]()
-        self.child_validity.extend(child_validity.copy())
-        self.child_offsets = List[UInt8]()
-        self.child_offsets.extend(child_offsets.copy())
-        self.child_values = List[UInt8]()
-        self.child_values.extend(child_values.copy())
+        self.child_validity = child_validity^
+        self.child_offsets = child_offsets^
+        self.child_values = child_values^
 
     def __copyinit__(out self, copy: Self):
         self.type = copy.type.copy()
         self.length = copy.length
         self.null_count = copy.null_count
-        self.validity = List[UInt8]()
-        self.validity.extend(copy.validity.copy())
-        self.offsets = List[UInt8]()
-        self.offsets.extend(copy.offsets.copy())
-        self.values = List[UInt8]()
-        self.values.extend(copy.values.copy())
+        self.validity = copy.validity.copy()
+        self.offsets = copy.offsets.copy()
+        self.values = copy.values.copy()
         self.child_length = copy.child_length
         self.child_null_count = copy.child_null_count
-        self.child_validity = List[UInt8]()
-        self.child_validity.extend(copy.child_validity.copy())
-        self.child_offsets = List[UInt8]()
-        self.child_offsets.extend(copy.child_offsets.copy())
-        self.child_values = List[UInt8]()
-        self.child_values.extend(copy.child_values.copy())
+        self.child_validity = copy.child_validity.copy()
+        self.child_offsets = copy.child_offsets.copy()
+        self.child_values = copy.child_values.copy()
 
     def __moveinit__(out self, deinit take: Self):
         self.type = take.type^
@@ -846,24 +847,35 @@ struct ArrowArray(Copyable, Movable):
         self.child_values = take.child_values^
 
     def copy(self) -> Self:
-        return Self(
-            self.type, self.length, self.null_count,
-            self.validity, self.offsets, self.values,
-            self.child_length, self.child_null_count,
-            self.child_validity, self.child_offsets, self.child_values,
+        return Self(copy=self)
+
+    def _into_list_child(
+        deinit self,
+        length: Int,
+        null_count: Int,
+        var validity: List[UInt8],
+        var offsets: List[UInt8],
+    ) -> ArrowArray:
+        """Consume this Utf8 array as the child of a new List<Utf8> column,
+        moving its buffers rather than copying them."""
+        return ArrowArray(
+            ArrowType.list_utf8(), length, null_count,
+            validity^, offsets^, List[UInt8](),
+            self.length, self.null_count,
+            self.validity^, self.offsets^, self.values^,
         )
 
     @staticmethod
     def list_utf8(
         length: Int,
         null_count: Int,
-        validity: List[UInt8],
-        offsets: List[UInt8],
+        var validity: List[UInt8],
+        var offsets: List[UInt8],
         child_length: Int,
         child_null_count: Int,
-        child_validity: List[UInt8],
-        child_offsets: List[UInt8],
-        child_values: List[UInt8],
+        var child_validity: List[UInt8],
+        var child_offsets: List[UInt8],
+        var child_values: List[UInt8],
     ) -> ArrowArray:
         """Convenience constructor for a List<Utf8> column: `offsets` here
         is the LIST's own offsets buffer (int32, length+1 entries, indexing
@@ -871,10 +883,116 @@ struct ArrowArray(Copyable, Movable):
         plain Utf8 array's offsets, which index into byte content."""
         return ArrowArray(
             ArrowType.list_utf8(), length, null_count,
-            validity, offsets, List[UInt8](),
+            validity^, offsets^, List[UInt8](),
             child_length, child_null_count,
-            child_validity, child_offsets, child_values,
+            child_validity^, child_offsets^, child_values^,
         )
+
+
+# ── Column body layout and emission ─────────────────────────────────────────
+#
+# A RecordBatch body is every column's buffers, in schema order, each padded
+# to 8 bytes. _layout_array computes the FieldNodes and BufferDescs from
+# buffer LENGTHS alone (no bytes touched), so a message header can be built
+# before any body bytes exist; _emit_array then writes the bytes, in the
+# same order, into whatever _ByteSink the caller has: the output List for
+# encode_arrow_file, or the file itself for ArrowFileWriter. The body is
+# never assembled as a separate buffer. Both functions walk the buffers in
+# the same order and must be kept in step.
+
+
+trait _ByteSink:
+    def put(mut self, data: List[UInt8]) raises:
+        ...
+
+    def put_zeros(mut self, n: Int) raises:
+        ...
+
+
+struct _ListSink(_ByteSink, Movable):
+    var buf: List[UInt8]
+
+    def __init__(out self, var buf: List[UInt8]):
+        self.buf = buf^
+
+    def take(deinit self) -> List[UInt8]:
+        return self.buf^
+
+    def put(mut self, data: List[UInt8]) raises:
+        self.buf.extend(Span(data))
+
+    def put_zeros(mut self, n: Int) raises:
+        for _ in range(n):
+            self.buf.append(UInt8(0))
+
+
+struct _FileSink(_ByteSink, Movable):
+    var file: FileHandle
+
+    def __init__(out self, var file: FileHandle):
+        self.file = file^
+
+    def put(mut self, data: List[UInt8]) raises:
+        self.file.write_bytes(Span(data))
+
+    def put_zeros(mut self, n: Int) raises:
+        var zeros = List[UInt8](length=n, fill=UInt8(0))
+        self.file.write_bytes(Span(zeros))
+
+
+def _layout_buffer(mut descs: List[BufferDesc], mut cur: Int, size: Int) raises:
+    descs.append(BufferDesc(Int64(cur), Int64(size)))
+    cur += ipc_pad8(size)
+
+
+def _layout_array(
+    arr: ArrowArray, mut nodes: List[FieldNode], mut descs: List[BufferDesc], mut cur: Int
+) raises:
+    """Append `arr`'s FieldNode(s) and BufferDescs, advancing `cur` (the
+    absolute body offset) past its padded buffers. A List<Utf8> column
+    contributes two nodes (list, then child: Arrow's depth-first layout)."""
+    if arr.type.tag == TYPE_LIST():
+        nodes.append(FieldNode(Int64(arr.length), Int64(arr.null_count)))
+        _layout_buffer(descs, cur, len(arr.validity) if arr.null_count > 0 else 0)
+        _layout_buffer(descs, cur, len(arr.offsets))
+        nodes.append(FieldNode(Int64(arr.child_length), Int64(arr.child_null_count)))
+        _layout_buffer(descs, cur, len(arr.child_validity) if arr.child_null_count > 0 else 0)
+        _layout_buffer(descs, cur, len(arr.child_offsets))
+        _layout_buffer(descs, cur, len(arr.child_values))
+        return
+    nodes.append(FieldNode(Int64(arr.length), Int64(arr.null_count)))
+    if arr.type.tag == TYPE_NULL():
+        return
+    # Absent validity is a zero-length descriptor with no bytes in the body.
+    _layout_buffer(descs, cur, len(arr.validity) if arr.null_count > 0 else 0)
+    if arr.type.tag == TYPE_UTF8() or arr.type.tag == TYPE_BINARY():
+        _layout_buffer(descs, cur, len(arr.offsets))
+    _layout_buffer(descs, cur, len(arr.values))
+
+
+def _emit_buffer[S: _ByteSink](mut sink: S, data: List[UInt8]) raises:
+    sink.put(data)
+    sink.put_zeros(ipc_pad8(len(data)) - len(data))
+
+
+def _emit_array[S: _ByteSink](mut sink: S, arr: ArrowArray) raises:
+    """Write `arr`'s body bytes in exactly _layout_array's order."""
+    if arr.type.tag == TYPE_LIST():
+        if arr.null_count > 0:
+            _emit_buffer(sink, arr.validity)
+        _emit_buffer(sink, arr.offsets)
+        if arr.child_null_count > 0:
+            _emit_buffer(sink, arr.child_validity)
+        _emit_buffer(sink, arr.child_offsets)
+        _emit_buffer(sink, arr.child_values)
+        return
+    if arr.type.tag == TYPE_NULL():
+        return
+    if arr.null_count > 0:
+        _emit_buffer(sink, arr.validity)
+    if arr.type.tag == TYPE_UTF8() or arr.type.tag == TYPE_BINARY():
+        _emit_buffer(sink, arr.offsets)
+    _emit_buffer(sink, arr.values)
 
 
 def encode_array(
@@ -891,49 +1009,15 @@ def encode_array(
     Returns (node, descs, body_bytes).
     body_bytes are padded to 8-byte boundaries internally.
     """
-    var node = FieldNode(Int64(arr.length), Int64(arr.null_count))
+    if arr.type.tag == TYPE_LIST():
+        raise Error("arrow: encode_array: List columns use encode_list_utf8_array")
+    var nodes = List[FieldNode]()
     var descs = List[BufferDesc]()
-    var body = List[UInt8]()
-
-    # Null type: no buffers at all
-    if arr.type.tag == TYPE_NULL():
-        return Tuple[FieldNode, List[BufferDesc], List[UInt8]](node^, descs^, body^)
-
     var cur = body_offset
-
-    # ── Validity bitmap ──────────────────────────────────────────────────────
-    if arr.null_count > 0:
-        var vlen = len(arr.validity)
-        descs.append(BufferDesc(Int64(cur), Int64(vlen)))
-        body.extend(arr.validity.copy())
-        var vpad = ipc_pad8(vlen) - vlen
-        for _ in range(vpad):
-            body.append(UInt8(0))
-        cur += ipc_pad8(vlen)
-    else:
-        # Absent validity: descriptor with length=0, no bytes in body
-        descs.append(BufferDesc(Int64(cur), Int64(0)))
-
-    # ── Offsets (Utf8 / Binary only) ─────────────────────────────────────────
-    if arr.type.tag == TYPE_UTF8() or arr.type.tag == TYPE_BINARY():
-        var olen = len(arr.offsets)
-        descs.append(BufferDesc(Int64(cur), Int64(olen)))
-        body.extend(arr.offsets.copy())
-        var opad = ipc_pad8(olen) - olen
-        for _ in range(opad):
-            body.append(UInt8(0))
-        cur += ipc_pad8(olen)
-
-    # ── Values ───────────────────────────────────────────────────────────────
-    var dlen = len(arr.values)
-    descs.append(BufferDesc(Int64(cur), Int64(dlen)))
-    body.extend(arr.values.copy())
-    var dpad = ipc_pad8(dlen) - dlen
-    for _ in range(dpad):
-        body.append(UInt8(0))
-    _ = cur + ipc_pad8(dlen)   # suppress unused-var warning
-
-    return Tuple[FieldNode, List[BufferDesc], List[UInt8]](node^, descs^, body^)
+    _layout_array(arr, nodes, descs, cur)
+    var sink = _ListSink(List[UInt8](capacity=cur - body_offset))
+    _emit_array(sink, arr)
+    return Tuple[FieldNode, List[BufferDesc], List[UInt8]](nodes[0].copy(), descs^, sink^.take())
 
 
 def encode_list_utf8_array(
@@ -943,55 +1027,16 @@ def encode_list_utf8_array(
     two FieldNodes (list, then child) and five BufferDescs (list validity,
     list offsets, child validity, child offsets, child values) -- the
     depth-first pre-order layout real Arrow's IPC format uses for nested
-    types. Additive, not a change to encode_array: List<Utf8> is the only
-    nested type this project supports, so it gets its own narrow encoder
-    rather than generalizing encode_array's single-node signature."""
+    types."""
     if arr.type.tag != TYPE_LIST():
         raise Error("arrow: encode_list_utf8_array: expected List type")
-
     var nodes = List[FieldNode]()
     var descs = List[BufferDesc]()
-    var body = List[UInt8]()
-
-    nodes.append(FieldNode(Int64(arr.length), Int64(arr.null_count)))
-
     var cur = body_offset
-
-    # ── List's own validity bitmap ────────────────────────────────────────
-    if arr.null_count > 0:
-        var vlen = len(arr.validity)
-        descs.append(BufferDesc(Int64(cur), Int64(vlen)))
-        body.extend(arr.validity.copy())
-        var vpad = ipc_pad8(vlen) - vlen
-        for _ in range(vpad):
-            body.append(UInt8(0))
-        cur += ipc_pad8(vlen)
-    else:
-        descs.append(BufferDesc(Int64(cur), Int64(0)))
-
-    # ── List's own offsets buffer (int32, indexes into child elements) ────
-    var olen = len(arr.offsets)
-    descs.append(BufferDesc(Int64(cur), Int64(olen)))
-    body.extend(arr.offsets.copy())
-    var opad = ipc_pad8(olen) - olen
-    for _ in range(opad):
-        body.append(UInt8(0))
-    cur += ipc_pad8(olen)
-
-    # ── Child Utf8 array: reuse encode_array via a throwaway Utf8 array
-    #    built from the inline child_* fields ─────────────────────────────
-    var child_arr = ArrowArray(
-        ArrowType.utf8(), arr.child_length, arr.child_null_count,
-        arr.child_validity, arr.child_offsets, arr.child_values,
-    )
-    var child_result = encode_array(child_arr, cur)
-    nodes.append(child_result[0].copy())
-    var child_descs = child_result[1].copy()
-    for j in range(len(child_descs)):
-        descs.append(child_descs[j].copy())
-    body.extend(child_result[2].copy())
-
-    return Tuple[List[FieldNode], List[BufferDesc], List[UInt8]](nodes^, descs^, body^)
+    _layout_array(arr, nodes, descs, cur)
+    var sink = _ListSink(List[UInt8](capacity=cur - body_offset))
+    _emit_array(sink, arr)
+    return Tuple[List[FieldNode], List[BufferDesc], List[UInt8]](nodes^, descs^, sink^.take())
 
 
 def _checked_slice_bounds(
@@ -1048,23 +1093,21 @@ def decode_list_utf8_array(
     )
     var validity = List[UInt8]()
     if descs[0].length > Int64(0):
-        validity.extend(body[vbounds[0] : vbounds[1]].copy())
+        validity.extend(body[vbounds[0] : vbounds[1]])
 
     var obounds = _checked_slice_bounds(
         descs[1].offset, descs[1].length, len(body), "decode_list_utf8_array: offsets buffer"
     )
     var offsets = List[UInt8]()
-    offsets.extend(body[obounds[0] : obounds[1]].copy())
+    offsets.extend(body[obounds[0] : obounds[1]])
 
     var child_descs = List[BufferDesc]()
     child_descs.append(descs[2].copy())
     child_descs.append(descs[3].copy())
     child_descs.append(descs[4].copy())
     var child = decode_array(ArrowType.utf8(), child_node, child_descs, body)
-
-    return ArrowArray.list_utf8(
-        Int(list_node.length), Int(list_node.null_count), validity, offsets,
-        child.length, child.null_count, child.validity, child.offsets, child.values,
+    return child^._into_list_child(
+        Int(list_node.length), Int(list_node.null_count), validity^, offsets^
     )
 
 
@@ -1098,7 +1141,7 @@ def decode_array(
         descs[0].offset, descs[0].length, len(body), "decode_array: validity buffer"
     )
     if descs[0].length > Int64(0):
-        validity.extend(body[vbounds[0] : vbounds[1]].copy())
+        validity.extend(body[vbounds[0] : vbounds[1]])
 
     # ── Offsets + values (Utf8 / Binary) or just values (all other types) ────
     if type.tag == TYPE_UTF8() or type.tag == TYPE_BINARY():
@@ -1107,23 +1150,67 @@ def decode_array(
         var obounds = _checked_slice_bounds(
             descs[1].offset, descs[1].length, len(body), "decode_array: offsets buffer"
         )
-        offsets.extend(body[obounds[0] : obounds[1]].copy())
+        offsets.extend(body[obounds[0] : obounds[1]])
         var vabounds = _checked_slice_bounds(
             descs[2].offset, descs[2].length, len(body), "decode_array: values buffer"
         )
-        values.extend(body[vabounds[0] : vabounds[1]].copy())
+        values.extend(body[vabounds[0] : vabounds[1]])
     else:
         if len(descs) < 2:
             raise Error("arrow: decode_array: expected 2 buffer descriptors for fixed-width type")
         var vabounds = _checked_slice_bounds(
             descs[1].offset, descs[1].length, len(body), "decode_array: values buffer"
         )
-        values.extend(body[vabounds[0] : vabounds[1]].copy())
+        values.extend(body[vabounds[0] : vabounds[1]])
 
     return ArrowArray(
         type, Int(node.length), Int(node.null_count),
-        validity, offsets, values,
+        validity^, offsets^, values^,
     )
+
+
+def _layout_record_batch(
+    schema: ArrowSchema, arrays: List[ArrowArray]
+) raises -> Tuple[List[FieldNode], List[BufferDesc], Int]:
+    """(nodes, buffer descs, padded body length) for a RecordBatch, from
+    buffer lengths only."""
+    if len(arrays) != len(schema.fields):
+        raise Error("arrow: encode_record_batch: column count does not match schema field count")
+    if len(arrays) > 65536:
+        raise Error("arrow: encode_record_batch: too many columns (> 65536)")
+    var nodes = List[FieldNode]()
+    var descs = List[BufferDesc]()
+    var cur = 0
+    for i in range(len(arrays)):
+        _layout_array(arrays[i], nodes, descs, cur)
+        # S-P5-2: guard against body offset overflow in large multi-column batches
+        if cur > _max_ipc_msg():
+            raise Error("arrow: encode_record_batch: combined column body exceeds 1 GB")
+    return Tuple[List[FieldNode], List[BufferDesc], Int](nodes^, descs^, cur)
+
+
+def _record_batch_header(
+    schema: ArrowSchema, arrays: List[ArrowArray]
+) raises -> Tuple[List[UInt8], Int]:
+    """The IPC envelope of a RecordBatch message up to (not including) its
+    body: continuation marker, metadata length, metadata, padding. Returns
+    (header bytes, body length). Header then _emit_array for each column
+    is byte-identical to encode_record_batch's output."""
+    var layout = _layout_record_batch(schema, arrays)
+    var row_count = Int64(arrays[0].length) if len(arrays) > 0 else Int64(0)
+    var metadata = _record_batch_metadata(row_count, layout[0], layout[1], layout[2])
+    if len(metadata) > _max_ipc_msg():
+        raise Error("arrow: encode_ipc_message: message too large (> 1 GB)")
+    var header_size = 8 + len(metadata)
+    var header = List[UInt8](capacity=ipc_pad8(header_size))
+    for _ in range(8):
+        header.append(UInt8(0))
+    write_u32_le(header, 0, UInt32(0xFFFFFFFF))
+    write_i32_le(header, 4, Int32(len(metadata)))
+    header.extend(Span(metadata))
+    for _ in range(ipc_pad8(header_size) - header_size):
+        header.append(UInt8(0))
+    return Tuple[List[UInt8], Int](header^, layout[2])
 
 
 def encode_record_batch(
@@ -1132,52 +1219,14 @@ def encode_record_batch(
 ) raises -> List[UInt8]:
     """
     Encode a full RecordBatch IPC message from a schema and its column arrays.
-    Builds nodes + buffers + body from the arrays, then delegates to
-    encode_record_batch_message.
+    Column bytes are copied exactly once, straight into the returned buffer.
     """
-    if len(arrays) != len(schema.fields):
-        raise Error("arrow: encode_record_batch: column count does not match schema field count")
-    if len(arrays) > 65536:
-        raise Error("arrow: encode_record_batch: too many columns (> 65536)")
-
-    var row_count = Int64(0)
-    if len(arrays) > 0:
-        row_count = Int64(arrays[0].length)
-
-    var nodes       = List[FieldNode]()
-    var all_buffers = List[BufferDesc]()
-    var full_body   = List[UInt8]()
-    var cur_offset  = 0
-
+    var hdr = _record_batch_header(schema, arrays)
+    var sink = _ListSink(List[UInt8](capacity=len(hdr[0]) + hdr[1]))
+    sink.put(hdr[0])
     for i in range(len(arrays)):
-        var col_nodes: List[FieldNode]
-        var col_descs: List[BufferDesc]
-        var col_body: List[UInt8]
-        if arrays[i].type.tag == TYPE_LIST():
-            # List<Utf8> emits TWO FieldNodes (list, then child) -- real
-            # Arrow's depth-first pre-order layout for nested types.
-            var result = encode_list_utf8_array(arrays[i], cur_offset)
-            col_nodes = result[0].copy()
-            col_descs = result[1].copy()
-            col_body = result[2].copy()
-        else:
-            var result = encode_array(arrays[i], cur_offset)
-            col_nodes = List[FieldNode]()
-            col_nodes.append(result[0].copy())
-            col_descs = result[1].copy()
-            col_body = result[2].copy()
-
-        for j in range(len(col_nodes)):
-            nodes.append(col_nodes[j].copy())
-        for j in range(len(col_descs)):
-            all_buffers.append(col_descs[j].copy())
-        full_body.extend(col_body.copy())
-        # S-P5-2: guard against cur_offset overflow in large multi-column batches
-        if len(col_body) > _max_ipc_msg() - cur_offset:
-            raise Error("arrow: encode_record_batch: combined column body exceeds 1 GB")
-        cur_offset += len(col_body)
-
-    return encode_record_batch_message(row_count, nodes, all_buffers, full_body)
+        _emit_array(sink, arrays[i])
+    return sink^.take()
 
 
 def decode_record_batch(
@@ -1265,11 +1314,10 @@ struct RecordBatch(Copyable, Movable):
     var length: Int64
     var columns: List[ArrowArray]
 
-    def __init__(out self, length: Int64, columns: List[ArrowArray]):
+    def __init__(out self, length: Int64, var columns: List[ArrowArray]):
+        """Takes ownership of `columns`: pass `cols^` to avoid a copy."""
         self.length = length
-        self.columns = List[ArrowArray]()
-        for i in range(len(columns)):
-            self.columns.append(columns[i].copy())
+        self.columns = columns^
 
     def __copyinit__(out self, copy: Self):
         self.length = copy.length
@@ -1282,7 +1330,7 @@ struct RecordBatch(Copyable, Movable):
         self.columns = take.columns^
 
     def copy(self) -> Self:
-        return Self(self.length, self.columns)
+        return Self(copy=self)
 
 
 def _arrow_magic() -> List[UInt8]:
@@ -1351,40 +1399,21 @@ def _encode_file_header(schema: ArrowSchema) raises -> List[UInt8]:
     return out^
 
 
-def _encode_file_batch(
-    schema: ArrowSchema, batch: RecordBatch, file_offset: Int, mut blocks: List[UInt8]
-) raises -> List[UInt8]:
-    """Encode one RecordBatch IPC message destined for byte `file_offset`
-    of the file, appending its 24-byte footer Block to `blocks`. Shared by
-    encode_arrow_file and ArrowFileWriter."""
-    var arrays = List[ArrowArray]()
+def _emit_file_batch[S: _ByteSink](
+    mut sink: S, schema: ArrowSchema, batch: RecordBatch, file_offset: Int, mut blocks: List[UInt8]
+) raises -> Int:
+    """Write one RecordBatch IPC message destined for byte `file_offset` of
+    the file into `sink`, appending its 24-byte footer Block to `blocks`.
+    Returns the number of bytes written. Shared by encode_arrow_file and
+    ArrowFileWriter."""
+    var hdr = _record_batch_header(schema, batch.columns)
+    # Block.metaDataLength is the padded header; Block.bodyLength must equal
+    # the Message's own bodyLength (pyarrow rejects a mismatch).
+    blocks.extend(_block_bytes(Int64(file_offset), Int32(len(hdr[0])), Int64(hdr[1])))
+    sink.put(hdr[0])
     for c in range(len(batch.columns)):
-        arrays.append(batch.columns[c].copy())
-
-    var rb_msg = encode_record_batch(schema, arrays)
-
-    # decode_ipc_message's 3rd return value (next_pos) is the position
-    # PAST the body (= padded_header_end + ipc_pad8(body_len)), not the
-    # end of the header -- so `rb_msg_len - rb_next` computed ~0 instead
-    # of the real body length (a real bug, caught by real Arrow/pyarrow
-    # rejecting the file with a Block/Message bodyLength mismatch; this
-    # package's own decode_arrow_file never noticed, since it re-derives
-    # batch boundaries by parsing each message directly rather than
-    # trusting these two Block fields). Use the actual decoded body
-    # bytes' length directly, and derive metaDataLength (the padded
-    # header size) by subtracting the body's own padding back out of
-    # next_pos -- both computed from values decode_ipc_message already
-    # returns, no signature change needed.
-    var ipc_result = decode_ipc_message(rb_msg, 0)
-    var rb_body_len = len(ipc_result[1])
-    var rb_next = ipc_result[2]
-
-    # metaDataLength = total IPC envelope size excluding body and its padding
-    # (i.e., the padded header: continuation + meta_len_field + metadata + header_pad)
-    var rb_meta_len = Int32(rb_next - ipc_pad8(rb_body_len))
-
-    blocks.extend(_block_bytes(Int64(file_offset), rb_meta_len, Int64(rb_body_len)))
-    return rb_msg^
+        _emit_array(sink, batch.columns[c])
+    return len(hdr[0]) + hdr[1]
 
 
 def _encode_file_footer(
@@ -1452,14 +1481,24 @@ def encode_arrow_file(
       [magic: 6]  (unpadded trailing magic, NOT the same 8-byte header magic)
 
     Holds the whole file in memory; use ArrowFileWriter to write batches
-    to disk one at a time instead.
+    to disk one at a time instead. Column bytes are copied exactly once,
+    straight into the returned buffer.
     """
-    var out = _encode_file_header(schema)
+    # Reserve the whole file up front: body sizes are known from the layout
+    # alone, and growing by doubling would transiently hold ~2x the file.
+    # Headers and footer are small; the slack covers them.
+    var header = _encode_file_header(schema)
+    var total = len(header) + 4096 + len(batches) * 1024 + len(schema.fields) * 256
+    for b in range(len(batches)):
+        total += _layout_record_batch(schema, batches[b].columns)[2]
+    var out = List[UInt8](capacity=total)
+    out.extend(Span(header))
+    var sink = _ListSink(out^)
     var blocks = List[UInt8]()
     for b in range(len(batches)):
-        out.extend(_encode_file_batch(schema, batches[b], len(out), blocks))
-    out.extend(_encode_file_footer(schema, blocks, len(batches)))
-    return out^
+        _ = _emit_file_batch(sink, schema, batches[b], len(sink.buf), blocks)
+    sink.put(_encode_file_footer(schema, blocks, len(batches)))
+    return sink^.take()
 
 
 struct ArrowFileWriter(Movable):
@@ -1474,7 +1513,7 @@ struct ArrowFileWriter(Movable):
     finish()ed is left truncated and is not a valid Arrow file.
     """
 
-    var _file: FileHandle
+    var _sink: _FileSink
     var _schema: ArrowSchema
     var _pos: Int
     var _blocks: List[UInt8]
@@ -1482,30 +1521,27 @@ struct ArrowFileWriter(Movable):
     var _finished: Bool
 
     def __init__(out self, path: String, schema: ArrowSchema) raises:
-        self._file = open(path, "w")
+        self._sink = _FileSink(open(path, "w"))
         self._schema = schema.copy()
         self._blocks = List[UInt8]()
         self._n_blocks = 0
         self._finished = False
         var header = _encode_file_header(schema)
-        self._file.write_bytes(Span(header))
+        self._sink.put(header)
         self._pos = len(header)
 
     def write_batch(mut self, batch: RecordBatch) raises:
         if self._finished:
             raise Error("arrow: ArrowFileWriter.write_batch: writer already finished")
-        var msg = _encode_file_batch(self._schema, batch, self._pos, self._blocks)
-        self._file.write_bytes(Span(msg))
-        self._pos += len(msg)
+        self._pos += _emit_file_batch(self._sink, self._schema, batch, self._pos, self._blocks)
         self._n_blocks += 1
 
     def finish(mut self) raises:
         if self._finished:
             raise Error("arrow: ArrowFileWriter.finish: writer already finished")
         self._finished = True
-        var footer = _encode_file_footer(self._schema, self._blocks, self._n_blocks)
-        self._file.write_bytes(Span(footer))
-        self._file.close()
+        self._sink.put(_encode_file_footer(self._schema, self._blocks, self._n_blocks))
+        self._sink.file.close()
 
 
 def decode_arrow_file(
@@ -1648,6 +1684,6 @@ def decode_arrow_file(
         if node_idx != len(rb_nodes):
             raise Error("arrow: decode_arrow_file: unconsumed field nodes remain in batch " + String(i))
 
-        batches.append(RecordBatch(rb_length, arrays))
+        batches.append(RecordBatch(rb_length, arrays^))
 
     return Tuple[ArrowSchema, List[RecordBatch]](schema^, batches^)

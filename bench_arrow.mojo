@@ -206,14 +206,14 @@ def _build_bench_batch(n_rows: Int) raises -> Tuple[ArrowSchema, RecordBatch]:
         id_values.append(UInt8(0))
     for i in range(n_rows):
         write_i64_le(id_values, i * 8, Int64(i))
-    var id_col = ArrowArray(ArrowType.int_(64, True), n_rows, 0, List[UInt8](), List[UInt8](), id_values)
+    var id_col = ArrowArray(ArrowType.int_(64, True), n_rows, 0, List[UInt8](), List[UInt8](), id_values^)
 
     var count_values = List[UInt8](capacity=n_rows * 8)
     for _ in range(n_rows * 8):
         count_values.append(UInt8(0))
     for i in range(n_rows):
         write_i64_le(count_values, i * 8, Int64(i * 2))
-    var count_col = ArrowArray(ArrowType.int_(64, True), n_rows, 0, List[UInt8](), List[UInt8](), count_values)
+    var count_col = ArrowArray(ArrowType.int_(64, True), n_rows, 0, List[UInt8](), List[UInt8](), count_values^)
 
     # Utf8 column: short fixed-width-ish strings, e.g. "row-0", "row-1", ...
     var label_offsets = List[UInt8](capacity=(n_rows + 1) * 4)
@@ -229,13 +229,13 @@ def _build_bench_batch(n_rows: Int) raises -> Tuple[ArrowSchema, RecordBatch]:
             label_values.append(sb[j])
         cur += len(sb)
         write_i32_le(label_offsets, (i + 1) * 4, Int32(cur))
-    var label_col = ArrowArray(ArrowType.utf8(), n_rows, 0, List[UInt8](), label_offsets, label_values)
+    var label_col = ArrowArray(ArrowType.utf8(), n_rows, 0, List[UInt8](), label_offsets^, label_values^)
 
     var cols = List[ArrowArray]()
     cols.append(id_col^)
     cols.append(count_col^)
     cols.append(label_col^)
-    var batch = RecordBatch(Int64(n_rows), cols)
+    var batch = RecordBatch(Int64(n_rows), cols^)
     return Tuple[ArrowSchema, RecordBatch](schema^, batch^)
 
 

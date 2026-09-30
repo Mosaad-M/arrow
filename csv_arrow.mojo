@@ -189,7 +189,7 @@ def build_array(
             if values[i].byte_length() > 0:
                 int_val = Int64(Int(values[i]))
             write_i64_le(value_bytes, i * 8, int_val)
-        return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
+        return ArrowArray(type, length, null_count, validity^, List[UInt8](), value_bytes^)
 
     # ── Int32 and smaller ────────────────────────────────────────────────────
     if type.tag == TYPE_INT():
@@ -204,7 +204,7 @@ def build_array(
             # Write LE bytes for the int value
             for b in range(byte_width):
                 value_bytes[i * byte_width + b] = UInt8((int_val >> (b * 8)) & 0xFF)
-        return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
+        return ArrowArray(type, length, null_count, validity^, List[UInt8](), value_bytes^)
 
     # ── Float64 ─────────────────────────────────────────────────────────────
     if type.tag == TYPE_FLOAT() and type.float_meta.precision == UInt16(2):
@@ -216,7 +216,7 @@ def build_array(
             if values[i].byte_length() > 0:
                 f_val = Float64(values[i])
             write_f64_le(value_bytes, i * 8, f_val)
-        return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
+        return ArrowArray(type, length, null_count, validity^, List[UInt8](), value_bytes^)
 
     # ── Float32 ─────────────────────────────────────────────────────────────
     if type.tag == TYPE_FLOAT():
@@ -229,7 +229,7 @@ def build_array(
             if values[i].byte_length() > 0:
                 f_val = Float64(values[i])
             write_f64_le(value_bytes, i * 8, f_val)
-        return ArrowArray(type, length, null_count, validity, List[UInt8](), value_bytes)
+        return ArrowArray(type, length, null_count, validity^, List[UInt8](), value_bytes^)
 
     # ── Utf8 / Binary ────────────────────────────────────────────────────────
     # Offsets: (length + 1) Int32 values
@@ -248,7 +248,7 @@ def build_array(
             cur_byte += len(sb)
         write_i32_le(offsets, (i + 1) * 4, Int32(cur_byte))
 
-    return ArrowArray(type, length, null_count, validity, offsets, value_bytes)
+    return ArrowArray(type, length, null_count, validity^, offsets^, value_bytes^)
 
 
 # ============================================================================
@@ -278,9 +278,8 @@ def csv_to_feather(csv_path: String, feather_path: String) raises:
 
     # Pack into one RecordBatch
     var n_rows = Int64(len(rows))
-    var batch = RecordBatch(n_rows, arrays)
     var batches = List[RecordBatch]()
-    batches.append(batch.copy())
+    batches.append(RecordBatch(n_rows, arrays^))
 
     var file_bytes = encode_arrow_file(schema, batches)
     Path(feather_path).write_bytes(file_bytes)

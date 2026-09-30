@@ -18,6 +18,10 @@ formats.  No C dependencies, no FFI — just Mojo.
   + Buffer struct vectors via FlatBuffers)
 - **Typed column encoding** — `ArrowArray` with validity bitmaps, offset
   buffers, and value buffers; full encode/decode roundtrip
+- **Copy-free by default**: `ArrowArray` and `RecordBatch` take ownership
+  of the buffers they are given (pass `buf^`; pass `buf.copy()` only to
+  keep your own), and encoding copies each column's bytes exactly once,
+  into the output
 - **Feather v2 / Arrow IPC file format** — `encode_arrow_file` /
   `decode_arrow_file` with proper magic bytes and FlatBuffers Footer
 - **Incremental file writing**: `ArrowFileWriter` appends one
@@ -28,6 +32,15 @@ formats.  No C dependencies, no FFI — just Mojo.
   Float64, Utf8), and writes a standards-compliant `.feather` file
 - **Feather → CSV** — `feather_to_csv` reconstructs a CSV from any
   `.feather` file produced by this library (or by pyarrow)
+
+## Upgrading to 2.0
+
+`ArrowArray(...)`, `ArrowArray.list_utf8(...)` and `RecordBatch(...)` now
+take their buffer arguments as owned (`var`) values instead of copying
+them. Code that passes a variable it still uses afterwards fails to
+compile with "cannot be implicitly copied"; add `^` where the variable is
+no longer needed (no copy) or `.copy()` where it is. Encoded bytes are
+unchanged from 1.x.
 
 ## Quick start
 
@@ -104,10 +117,10 @@ var schema = ArrowSchema(fields)
 var id_bytes = List[UInt8]()
 # ... populate 8-byte LE values for each id ...
 var id_col = ArrowArray(ArrowType.int_(64, True), 2, 0,
-                        List[UInt8](), List[UInt8](), id_bytes)
+                        List[UInt8](), List[UInt8](), id_bytes^)
 var cols = List[ArrowArray]()
-cols.append(id_col.copy())
-var batch = RecordBatch(Int64(2), cols)
+cols.append(id_col^)
+var batch = RecordBatch(Int64(2), cols^)
 var batches = List[RecordBatch]()
 batches.append(batch.copy())
 

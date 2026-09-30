@@ -707,7 +707,7 @@ def test_encode_array_int32_no_nulls() raises:
     _write_i32_le_into(values, Int32(10))
     _write_i32_le_into(values, Int32(20))
     _write_i32_le_into(values, Int32(30))
-    var arr = ArrowArray(ArrowType.int_(32, True), 3, 0, List[UInt8](), List[UInt8](), values)
+    var arr = ArrowArray(ArrowType.int_(32, True), 3, 0, List[UInt8](), List[UInt8](), values.copy())
 
     var result = encode_array(arr, 0)
     var node = result[0].copy()
@@ -742,7 +742,7 @@ def test_encode_array_int32_with_nulls() raises:
     _write_i32_le_into(values, Int32(0))   # null slot
     _write_i32_le_into(values, Int32(30))
     _write_i32_le_into(values, Int32(0))   # null slot
-    var arr = ArrowArray(ArrowType.int_(32, True), 4, 2, validity, List[UInt8](), values)
+    var arr = ArrowArray(ArrowType.int_(32, True), 4, 2, validity.copy(), List[UInt8](), values.copy())
 
     var result = encode_array(arr, 0)
     var node = result[0].copy()
@@ -766,7 +766,7 @@ def test_encode_array_int64() raises:
     var values = List[UInt8]()
     _write_i64_le_into(values, Int64(1000000000000))
     _write_i64_le_into(values, Int64(-999))
-    var arr = ArrowArray(ArrowType.int_(64, True), 2, 0, List[UInt8](), List[UInt8](), values)
+    var arr = ArrowArray(ArrowType.int_(64, True), 2, 0, List[UInt8](), List[UInt8](), values.copy())
 
     var result = encode_array(arr, 0)
     var node = result[0].copy()
@@ -788,7 +788,7 @@ def test_encode_array_float64() raises:
     for _ in range(8):
         values.append(UInt8(0))
     write_f64_le(values, 0, Float64(3.14))
-    var arr = ArrowArray(ArrowType.float_(2), 1, 0, List[UInt8](), List[UInt8](), values)
+    var arr = ArrowArray(ArrowType.float_(2), 1, 0, List[UInt8](), List[UInt8](), values.copy())
 
     var result = encode_array(arr, 0)
     var node = result[0].copy()
@@ -808,7 +808,7 @@ def test_encode_array_bool() raises:
     # 4 elements: [true, false, true, false] → 0b00000101 = 5
     var values = List[UInt8]()
     values.append(UInt8(0b00000101))
-    var arr = ArrowArray(ArrowType.bool_(), 4, 0, List[UInt8](), List[UInt8](), values)
+    var arr = ArrowArray(ArrowType.bool_(), 4, 0, List[UInt8](), List[UInt8](), values.copy())
 
     var result = encode_array(arr, 0)
     var node = result[0].copy()
@@ -836,7 +836,7 @@ def test_encode_array_utf8() raises:
     var sb = s.as_bytes()
     for i in range(len(sb)):
         values.append(sb[i])
-    var arr = ArrowArray(ArrowType.utf8(), 2, 0, List[UInt8](), offsets, values)
+    var arr = ArrowArray(ArrowType.utf8(), 2, 0, List[UInt8](), offsets.copy(), values.copy())
 
     var result = encode_array(arr, 0)
     var node = result[0].copy()
@@ -882,7 +882,7 @@ def test_encode_array_null_count() raises:
     _write_i32_le_into(values, Int32(42))
     _write_i32_le_into(values, Int32(0))
     _write_i32_le_into(values, Int32(0))
-    var arr = ArrowArray(ArrowType.int_(32, True), 3, 2, validity, List[UInt8](), values)
+    var arr = ArrowArray(ArrowType.int_(32, True), 3, 2, validity.copy(), List[UInt8](), values.copy())
 
     var result = encode_array(arr, 0)
     var node = result[0].copy()
@@ -895,7 +895,7 @@ def test_record_batch_encode_decode() raises:
     var v0 = List[UInt8]()
     _write_i32_le_into(v0, Int32(1))
     _write_i32_le_into(v0, Int32(2))
-    var col0 = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v0)
+    var col0 = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v0.copy())
 
     # Column 1: Utf8, 2 rows, no nulls: ["hi", "bye"]
     var off1 = List[UInt8]()
@@ -908,7 +908,7 @@ def test_record_batch_encode_decode() raises:
     v1.append(UInt8(98))   # b
     v1.append(UInt8(121))  # y
     v1.append(UInt8(101))  # e
-    var col1 = ArrowArray(ArrowType.utf8(), 2, 0, List[UInt8](), off1, v1)
+    var col1 = ArrowArray(ArrowType.utf8(), 2, 0, List[UInt8](), off1.copy(), v1.copy())
 
     var fields = List[ArrowField]()
     fields.append(ArrowField("id", ArrowType.int_(32, True), False))
@@ -940,7 +940,7 @@ def test_record_batch_null_values_preserved() raises:
     _write_i32_le_into(values, Int32(7))
     _write_i32_le_into(values, Int32(0))
     _write_i32_le_into(values, Int32(9))
-    var col = ArrowArray(ArrowType.int_(32, True), 3, 1, validity, List[UInt8](), values)
+    var col = ArrowArray(ArrowType.int_(32, True), 3, 1, validity.copy(), List[UInt8](), values.copy())
 
     var fields = List[ArrowField]()
     fields.append(ArrowField("x", ArrowType.int_(32, True), True))
@@ -990,8 +990,8 @@ def _make_list_utf8_array() -> ArrowArray:
         child_values.append(sb[i])
 
     return ArrowArray.list_utf8(
-        3, 1, validity, offsets,
-        2, 0, List[UInt8](), child_offsets, child_values,
+        3, 1, validity.copy(), offsets.copy(),
+        2, 0, List[UInt8](), child_offsets.copy(), child_values.copy(),
     )
 
 
@@ -1047,7 +1047,7 @@ def test_record_batch_with_mixed_list_and_scalar_columns() raises:
     var name_validity = List[UInt8]()
     name_validity.append(UInt8(0b00000101))
     var name_col = ArrowArray(
-        ArrowType.utf8(), 3, 1, name_validity, name_offsets, name_values
+        ArrowType.utf8(), 3, 1, name_validity.copy(), name_offsets.copy(), name_values.copy()
     )
 
     var ids_col = _make_list_utf8_array()
@@ -1086,7 +1086,7 @@ def test_arrow_file_roundtrip_with_list_utf8_column() raises:
 
     var arrays = List[ArrowArray]()
     arrays.append(ids_col.copy())
-    var batch = RecordBatch(Int64(3), arrays)
+    var batch = RecordBatch(Int64(3), arrays.copy())
     var batches = List[RecordBatch]()
     batches.append(batch.copy())
 
@@ -1207,10 +1207,10 @@ def test_arrow_file_single_batch() raises:
     var v = List[UInt8]()
     _write_i32_le_into(v, Int32(10))
     _write_i32_le_into(v, Int32(20))
-    var col = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v)
+    var col = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v.copy())
     var cols = List[ArrowArray]()
     cols.append(col.copy())
-    var batch = RecordBatch(Int64(2), cols)
+    var batch = RecordBatch(Int64(2), cols.copy())
     var batches = List[RecordBatch]()
     batches.append(batch.copy())
 
@@ -1246,10 +1246,10 @@ def test_arrow_file_block_body_length_matches_real_message() raises:
     var v = List[UInt8]()
     _write_i32_le_into(v, Int32(10))
     _write_i32_le_into(v, Int32(20))
-    var col = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v)
+    var col = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v.copy())
     var cols = List[ArrowArray]()
     cols.append(col.copy())
-    var batch = RecordBatch(Int64(2), cols)
+    var batch = RecordBatch(Int64(2), cols.copy())
     var batches = List[RecordBatch]()
     batches.append(batch.copy())
 
@@ -1292,7 +1292,7 @@ def test_arrow_file_multi_batch() raises:
     # Batch 0: [1]
     var v0 = List[UInt8]()
     _write_i32_le_into(v0, Int32(1))
-    var col0 = ArrowArray(ArrowType.int_(32, True), 1, 0, List[UInt8](), List[UInt8](), v0)
+    var col0 = ArrowArray(ArrowType.int_(32, True), 1, 0, List[UInt8](), List[UInt8](), v0.copy())
     var cols0 = List[ArrowArray]()
     cols0.append(col0.copy())
 
@@ -1300,13 +1300,13 @@ def test_arrow_file_multi_batch() raises:
     var v1 = List[UInt8]()
     _write_i32_le_into(v1, Int32(2))
     _write_i32_le_into(v1, Int32(3))
-    var col1 = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v1)
+    var col1 = ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v1.copy())
     var cols1 = List[ArrowArray]()
     cols1.append(col1.copy())
 
     var batches = List[RecordBatch]()
-    batches.append(RecordBatch(Int64(1), cols0).copy())
-    batches.append(RecordBatch(Int64(2), cols1).copy())
+    batches.append(RecordBatch(Int64(1), cols0.copy()).copy())
+    batches.append(RecordBatch(Int64(2), cols1.copy()).copy())
 
     var file_bytes = encode_arrow_file(schema, batches)
     _ = len(file_bytes)
@@ -1429,15 +1429,15 @@ def _two_int_batches() -> List[RecordBatch]:
     var v0 = List[UInt8]()
     _write_i32_le_into(v0, Int32(1))
     var cols0 = List[ArrowArray]()
-    cols0.append(ArrowArray(ArrowType.int_(32, True), 1, 0, List[UInt8](), List[UInt8](), v0))
+    cols0.append(ArrowArray(ArrowType.int_(32, True), 1, 0, List[UInt8](), List[UInt8](), v0.copy()))
     var v1 = List[UInt8]()
     _write_i32_le_into(v1, Int32(2))
     _write_i32_le_into(v1, Int32(3))
     var cols1 = List[ArrowArray]()
-    cols1.append(ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v1))
+    cols1.append(ArrowArray(ArrowType.int_(32, True), 2, 0, List[UInt8](), List[UInt8](), v1.copy()))
     var batches = List[RecordBatch]()
-    batches.append(RecordBatch(Int64(1), cols0))
-    batches.append(RecordBatch(Int64(2), cols1))
+    batches.append(RecordBatch(Int64(1), cols0.copy()))
+    batches.append(RecordBatch(Int64(2), cols1.copy()))
     return batches^
 
 
@@ -1471,7 +1471,7 @@ def test_arrow_file_writer_matches_encode_arrow_file_list_utf8() raises:
     var arrays = List[ArrowArray]()
     arrays.append(_make_list_utf8_array())
     var batches = List[RecordBatch]()
-    batches.append(RecordBatch(Int64(3), arrays))
+    batches.append(RecordBatch(Int64(3), arrays.copy()))
     var path = "/tmp/arrow_test_writer_list.feather"
     var w = ArrowFileWriter(path, schema)
     w.write_batch(batches[0])
@@ -1511,6 +1511,25 @@ def test_arrow_file_writer_write_after_finish_raises() raises:
     except:
         raised = True
     assert_true(raised, "second finish should raise")
+
+
+def test_arrow_array_and_record_batch_copies_are_independent() raises:
+    """Constructors now take ownership of their buffers; copy() must still
+    produce a deep, independent copy of every buffer, including List<Utf8>
+    child buffers and a RecordBatch's columns."""
+    var arr = _make_list_utf8_array()
+    var dup = arr.copy()
+    dup.offsets[0] = UInt8(99)
+    dup.child_values[0] = UInt8(99)
+    assert_true(arr.offsets[0] == UInt8(0), "original list offsets untouched")
+    assert_true(arr.child_values[0] == UInt8(77), "original child values untouched ('M')")
+
+    var cols = List[ArrowArray]()
+    cols.append(arr^)
+    var batch = RecordBatch(Int64(3), cols^)
+    var batch_dup = batch.copy()
+    batch_dup.columns[0].child_values[0] = UInt8(99)
+    assert_true(batch.columns[0].child_values[0] == UInt8(77), "original batch column untouched")
 
 
 # ============================================================================
@@ -1622,6 +1641,7 @@ def main() raises:
     run_test[test_arrow_file_writer_matches_encode_arrow_file_list_utf8]("test_arrow_file_writer_matches_encode_arrow_file_list_utf8", passed, failed)
     run_test[test_arrow_file_writer_zero_batches]("test_arrow_file_writer_zero_batches", passed, failed)
     run_test[test_arrow_file_writer_write_after_finish_raises]("test_arrow_file_writer_write_after_finish_raises", passed, failed)
+    run_test[test_arrow_array_and_record_batch_copies_are_independent]("test_arrow_array_and_record_batch_copies_are_independent", passed, failed)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:
