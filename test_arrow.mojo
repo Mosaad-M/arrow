@@ -265,7 +265,7 @@ def test_arrow_type_bool_tag() raises:
 
 
 def test_adversarial_ipc_pad8_overflow() raises:
-    """ipc_pad8 must raise on input that would overflow size + 7."""
+    """Test that ipc_pad8 must raise on input that would overflow size + 7."""
     var raised = False
     try:
         _ = ipc_pad8(0x3FFF_FFFF_FFFF_FFFF + 1)
@@ -275,7 +275,7 @@ def test_adversarial_ipc_pad8_overflow() raises:
 
 
 def test_adversarial_encode_huge_metadata() raises:
-    """encode_ipc_message must raise when metadata exceeds 1 GB cap."""
+    """Test that encode_ipc_message must raise when metadata exceeds 1 GB cap."""
     # Build a list header that claims huge length without actually allocating it
     # We test the guard, not actual allocation — use a small list but mock via
     # a list that reports a huge length. We can't fake len(), so instead verify
@@ -290,7 +290,7 @@ def test_adversarial_encode_huge_metadata() raises:
 
 
 def test_adversarial_decode_negative_pos() raises:
-    """decode_ipc_message must raise on negative pos."""
+    """Test that decode_ipc_message must raise on negative pos."""
     var buf = encode_eos()
     var raised = False
     try:
@@ -301,7 +301,7 @@ def test_adversarial_decode_negative_pos() raises:
 
 
 def test_adversarial_decode_huge_meta_len() raises:
-    """meta_len = Int32.MAX in a real buffer must raise, not read OOB."""
+    """Test that meta_len = Int32.MAX in a real buffer must raise, not read OOB."""
     # Build a valid 8-byte IPC header but inject meta_len = 0x7FFFFFFF
     var buf = List[UInt8](capacity=8)
     for _ in range(8):
@@ -335,7 +335,7 @@ def test_adversarial_decode_truncated_buf() raises:
 
 
 def test_adversarial_encode_arrow_type_bad_tag() raises:
-    """encode_arrow_type must raise on unknown tag (tag=0, tag=99)."""
+    """Test that encode_arrow_type must raise on unknown tag (tag=0, tag=99)."""
     var b0 = FlatBufferBuilder(64)
     var t0 = ArrowType(UInt8(0), Int32(0), False, UInt16(0))
     var raised0 = False
@@ -407,7 +407,7 @@ def test_schema_single_field_int32() raises:
 
 
 def test_schema_nullable_field() raises:
-    """nullable=True roundtrips correctly."""
+    """Test that nullable=True roundtrips correctly."""
     var fields = List[ArrowField]()
     fields.append(ArrowField("score", ArrowType.float_(2), True))
     var schema = ArrowSchema(fields, Int16(0))
@@ -510,7 +510,7 @@ def test_decode_schema_wrong_header_type() raises:
 
 
 def test_schema_endianness_roundtrip() raises:
-    """endianness=1 (big-endian) roundtrips correctly."""
+    """Test that endianness=1 (big-endian) roundtrips correctly."""
     var fields = List[ArrowField]()
     fields.append(ArrowField("x", ArrowType.int_(32, True), False))
     var schema = ArrowSchema(fields, Int16(1))
@@ -542,7 +542,7 @@ def test_rb_empty() raises:
 
 
 def test_rb_row_count() raises:
-    """length field roundtrips exactly."""
+    """Test that length field roundtrips exactly."""
     var buf = encode_record_batch_message(
         Int64(1000), List[FieldNode](), List[BufferDesc](), List[UInt8]()
     )
@@ -1000,7 +1000,7 @@ def _make_list_utf8_array() -> ArrowArray:
 
 
 def test_encode_decode_list_utf8_array_roundtrip() raises:
-    """encode_list_utf8_array / decode_list_utf8_array directly, in
+    """Test that encode_list_utf8_array / decode_list_utf8_array directly, in
     isolation from encode_record_batch."""
     var arr = _make_list_utf8_array()
 
@@ -1328,7 +1328,7 @@ def test_arrow_file_multi_batch() raises:
 
 
 def test_adversarial_decode_array_negative_offset() raises:
-    """decode_array raises on negative buffer offset (S-P5-1)."""
+    """Test that decode_array raises on negative buffer offset (S-P5-1)."""
     var node = FieldNode(Int64(1), Int64(0))
     var descs = List[BufferDesc]()
     descs.append(BufferDesc(Int64(0), Int64(0)))     # validity (absent)
@@ -1345,7 +1345,7 @@ def test_adversarial_decode_array_negative_offset() raises:
 
 
 def test_adversarial_decode_array_negative_length() raises:
-    """decode_array raises on negative buffer length (S-P5-1)."""
+    """Test that decode_array raises on negative buffer length (S-P5-1)."""
     var node = FieldNode(Int64(1), Int64(0))
     var descs = List[BufferDesc]()
     descs.append(BufferDesc(Int64(0), Int64(-1)))    # negative length — must raise
@@ -1362,7 +1362,7 @@ def test_adversarial_decode_array_negative_length() raises:
 
 
 def test_adversarial_decode_array_offset_length_overflow() raises:
-    """decode_array raises cleanly (not a process crash) when a crafted
+    """Test that decode_array raises cleanly (not a process crash) when a crafted
     BufferDesc's offset+length would silently wrap Int64 -- a real,
     confirmed exploit before this fix: offset and length each near
     Int64::MAX made `start + length` wrap to a small/negative value,
@@ -1568,7 +1568,7 @@ def _assemble_file_by_hand(schema: ArrowSchema, batches: List[RecordBatch]) rais
 
 
 def test_low_level_file_api_matches_encode_arrow_file() raises:
-    """encode_file_header + encode_record_batch_header + encode_file_footer
+    """Test that encode_file_header + encode_record_batch_header + encode_file_footer
     around caller-written bodies must reproduce encode_arrow_file exactly:
     multiple batches, and a List<Utf8> column with nulls."""
     var schema = _make_simple_schema()

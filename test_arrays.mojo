@@ -110,7 +110,7 @@ def test_any_array_dtype_dispatch() raises:
 
 
 def test_any_array_downcast() raises:
-    """downcast_primitive reconstructs a usable PrimitiveArray from AnyArray."""
+    """Test that downcast_primitive reconstructs a usable PrimitiveArray from AnyArray."""
     var b = PrimitiveBuilder[Int32Type]()
     b.append(Int32(99))
     b.append(Int32(100))
