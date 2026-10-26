@@ -196,7 +196,7 @@ struct StringArray(Copyable, Movable):
         var buf = List[UInt8]()
         for j in range(start, end):
             buf.append(self._values[j])
-        return String(unsafe_from_utf8=buf^)
+        return String(unsafe_from_utf8=buf)
 
 
 # ── BinaryArray ───────────────────────────────────────────────────────────────

@@ -52,7 +52,7 @@ unchanged from 1.x.
 
 ```bash
 pixi install                        # install dependencies (flatbuffers 1.0.2)
-pixi run test-arrow                 # 63 Arrow IPC tests
+pixi run test-arrow                 # 71 Arrow IPC tests
 pixi run test-csv-arrow             # 7 CSV converter tests
 ```
 
@@ -164,6 +164,8 @@ feather_to_csv("data.feather", "out.csv")
 | `bench_arrow.mojo` | Micro-benchmarks |
 
 ## Dependencies
+
+Requires Mojo `>= 1.2.0`.
 
 - [flatbuffers](https://github.com/Mosaad-M/flatbuffers) `>=1.0.2` —
   pure-Mojo FlatBuffers encoder/decoder (managed by

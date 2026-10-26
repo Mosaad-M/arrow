@@ -123,7 +123,7 @@ def test_csv_roundtrip() raises:
 
 
 def test_csv_to_feather_file() raises:
-    """csv_to_feather writes a real file readable by decode_arrow_file."""
+    """Test that csv_to_feather writes a real file readable by decode_arrow_file."""
     _write_csv(
         "/tmp/test_e2e.csv",
         "name,value\nalice,10\nbob,20\n",
